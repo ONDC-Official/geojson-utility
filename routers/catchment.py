@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Response
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Response, Request
 from sqlalchemy.orm import Session
 from core.auth import get_current_user
 from db.session import get_db, Base, engine
@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv
+from core.limiter import limiter
 
 load_dotenv()
 
@@ -58,9 +59,19 @@ class LeptonMapsClient:
             self.conn.request("GET", full_path, headers=self.headers)
             resp = self.conn.getresponse()
             body = resp.read()
+            body_text = body.decode()
+            if resp.status == 401:
+                logger.error("HTTP 401: Unauthorized - Lepton Maps API key is invalid or expired")
+                raise HTTPException(status_code=401, detail="Lepton Maps API: Unauthorized (HTTP 401). Your API key is invalid or expired.")
+            if resp.status == 403:
+                logger.error("HTTP 403: Forbidden - Lepton Maps API key is not allowed")
+                raise HTTPException(status_code=403, detail="Lepton Maps API: Forbidden (HTTP 403). Your API key does not have access.")
+            if resp.status == 402:
+                logger.error("HTTP 402: Not enough credits on Lepton Maps API")
+                raise HTTPException(status_code=402, detail="Lepton Maps API: Not enough credits (HTTP 402). Please check your API quota or upgrade your plan.")
             if resp.status != 200:
-                logger.error(f"HTTP {resp.status}: {body.decode()}")
-                raise http.client.HTTPException(f"Unexpected status {resp.status}")
+                logger.error(f"HTTP {resp.status}: {body_text}")
+                raise HTTPException(status_code=resp.status, detail=f"Lepton Maps API: Unexpected status {resp.status}: {body_text}")
             geojson = json.loads(body)
             logger.info("Successfully fetched catchment GeoJSON")
             return geojson
@@ -109,7 +120,8 @@ def get_sample_csv():
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=sample_catchment.csv"})
 
 @router.post("/bulk")
-async def bulk_process_catchments(file: UploadFile = File(...), current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+async def bulk_process_catchments(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="File must be a CSV")
     try:
