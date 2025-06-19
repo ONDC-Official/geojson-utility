@@ -108,5 +108,4 @@ curl -X POST http://localhost:8000/admin/cleanup-blacklist
 
 - All endpoints requiring authentication need the `Authorization: Bearer <access_token>` header.
 - The JWT blacklist is cleaned up automatically on server startup and can be triggered manually via the admin endpoint.
-- All processed CSVs are stored in the database with a `geojson` column for each row. There is no row-level storage or querying.
 - Use Alembic for all future database schema changes.
