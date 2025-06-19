@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # Load .env before anything else. Do not call load_dotenv() elsewhere.
+
 from fastapi import FastAPI
 from db.session import engine, Base
 from routers import users, catchment
@@ -85,4 +88,10 @@ def root():
 
 @app.on_event("startup")
 def run_blacklist_cleanup():
-    cleanup_expired_blacklist_entries() 
+    # Log the DATABASE_URL at startup
+    print(f"[Startup] DATABASE_URL: {os.environ.get('DATABASE_URL')}")
+    cleanup_expired_blacklist_entries()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

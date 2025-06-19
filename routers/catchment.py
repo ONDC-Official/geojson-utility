@@ -16,6 +16,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.limiter import limiter
+import threading
+import httpx
 
 load_dotenv()
 
@@ -125,98 +127,134 @@ def get_sample_csv():
 async def bulk_process_catchments(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="File must be a CSV")
-    try:
-        content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="CSV file is empty.")
-        username = current_user.get('username')
-        user_id = current_user.get('user_id') if 'user_id' in current_user else None
-        df = pd.read_csv(io.StringIO(content.decode('utf-8')))
-        required_columns = {'seller_id', 'provider_id', 'lat', 'long'}
-        missing_columns = required_columns - set(df.columns)
-        if missing_columns:
-            raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing_columns)}")
-        errors = []
-        geojson_results = [None] * len(df)
-        api_key = os.environ.get("LEPTON_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="Lepton Maps API key not set in environment variable LEPTON_API_KEY")
-
-        def process_row(idx, row):
-            row_errors = []
-            seller_id = row['seller_id']
-            provider_id = row['provider_id']
-            try:
-                lat = float(row['lat'])
-                if not (-90 <= lat <= 90):
-                    row_errors.append(f"lat must be between -90 and 90.")
-            except Exception:
-                row_errors.append(f"lat must be a valid float.")
-                lat = None
-            try:
-                lon = float(row['long'])
-                if not (-180 <= lon <= 180):
-                    row_errors.append(f"long must be between -180 and 180.")
-            except Exception:
-                row_errors.append(f"long must be a valid float.")
-                lon = None
-            if not isinstance(seller_id, str) or not seller_id:
-                row_errors.append("seller_id must be a non-empty string.")
-            if not isinstance(provider_id, str) or not provider_id:
-                row_errors.append("provider_id must be a non-empty string.")
-            geojson_str = '{}'
-            if not row_errors and lat is not None and lon is not None:
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="CSV file is empty.")
+    username = current_user.get('username')
+    user_id = current_user.get('user_id') if 'user_id' in current_user else None
+    # Save file as pending
+    new_csv = CSVFile(filename=file.filename, file_content=content, username=username, user_id=user_id, status='pending')
+    db.add(new_csv)
+    db.commit()
+    db.refresh(new_csv)
+    csv_id = new_csv.id
+    # Start background processing
+    def process_csv_in_background(csv_id, content, username, user_id):
+        session = next(get_db())
+        try:
+            csv_file = session.query(CSVFile).filter(CSVFile.id == csv_id).first()
+            if not csv_file:
+                return
+            csv_file.status = 'processing'
+            session.commit()
+            df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+            required_columns = {'seller_id', 'provider_id', 'lat', 'long'}
+            missing_columns = required_columns - set(df.columns)
+            if missing_columns:
+                csv_file.status = 'failed'
+                session.commit()
+                return
+            errors = []
+            geojson_results = [None] * len(df)
+            api_key = os.environ.get("LEPTON_API_KEY")
+            if not api_key:
+                csv_file.status = 'failed'
+                session.commit()
+                return
+            def process_row(idx, row):
+                row_errors = []
+                seller_id = row['seller_id']
+                provider_id = row['provider_id']
                 try:
-                    client = LeptonMapsClient(api_key=api_key)  # create a new client per thread
-                    geojson = client.get_catchment_geojson(latitude=lat, longitude=lon)
-                    polygon_geojson = client.extract_polygon_geojson(geojson)
-                    geojson_str = json.dumps(polygon_geojson)
+                    lat = float(row['lat'])
+                    if not (-90 <= lat <= 90):
+                        row_errors.append(f"lat must be between -90 and 90.")
+                except Exception:
+                    row_errors.append(f"lat must be a valid float.")
+                    lat = None
+                try:
+                    lon = float(row['long'])
+                    if not (-180 <= lon <= 180):
+                        row_errors.append(f"long must be between -180 and 180.")
+                except Exception:
+                    row_errors.append(f"long must be a valid float.")
+                    lon = None
+                if not isinstance(seller_id, str) or not seller_id:
+                    row_errors.append("seller_id must be a non-empty string.")
+                if not isinstance(provider_id, str) or not provider_id:
+                    row_errors.append("provider_id must be a non-empty string.")
+                geojson_str = '{}'
+                if not row_errors and lat is not None and lon is not None:
+                    try:
+                        client = LeptonMapsClient(api_key=api_key)
+                        geojson = client.get_catchment_geojson(latitude=lat, longitude=lon)
+                        polygon_geojson = client.extract_polygon_geojson(geojson)
+                        geojson_str = json.dumps(polygon_geojson)
+                    except Exception as e:
+                        logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
+                        row_errors.append(f"GeoJSON error: {str(e)}")
+                return idx, geojson_str, row_errors
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [executor.submit(process_row, idx, row) for idx, row in df.iterrows()]
+                for future in as_completed(futures):
+                    idx, geojson_str, row_errors = future.result()
+                    geojson_results[idx] = geojson_str
+                    if row_errors:
+                        errors.append(f"Row {idx+1}: {'; '.join(row_errors)}")
+            if errors:
+                csv_file.status = 'failed'
+                session.commit()
+                return
+            df['geojson'] = geojson_results
+            output = io.StringIO()
+            df.to_csv(output, index=False)
+            output.seek(0)
+            processed_content = output.getvalue().encode('utf-8')
+            csv_file.file_content = processed_content
+            csv_file.status = 'done'
+            session.commit()
+            # Send webhook after processing is done
+            webhook_url = os.getenv("WEBHOOK_URL")
+            if webhook_url:
+                try:
+                    download_url = f"http://localhost:8000/catchment/csv/{csv_id}"
+                    payload = {
+                        "csv_id": csv_id,
+                        "status": "done",
+                        "download_url": download_url
+                    }
+                    response = httpx.post(webhook_url, json=payload, timeout=5)
+                    response.raise_for_status()
+                    logger.info(f"Webhook sent to {webhook_url}")
                 except Exception as e:
-                    logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
-                    row_errors.append(f"GeoJSON error: {str(e)}")
-            return idx, geojson_str, row_errors
+                    logger.error(f"Failed to send webhook: {e}")
+            else:
+                logger.info("No WEBHOOK_URL set, skipping webhook.")
+        except Exception as e:
+            logger.error(f"Error processing file: {str(e)}")
+            csv_file = session.query(CSVFile).filter(CSVFile.id == csv_id).first()
+            if csv_file:
+                csv_file.status = 'failed'
+                session.commit()
+        finally:
+            session.close()
+    threading.Thread(target=process_csv_in_background, args=(csv_id, content, username, user_id), daemon=True).start()
+    return {"csv_id": csv_id, "status": "pending"}
 
-        # Use ThreadPoolExecutor for parallel processing
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(process_row, idx, row) for idx, row in df.iterrows()]
-            for future in as_completed(futures):
-                idx, geojson_str, row_errors = future.result()
-                geojson_results[idx] = geojson_str
-                if row_errors:
-                    errors.append(f"Row {idx+1}: {'; '.join(row_errors)}")
-
-        if errors:
-            raise HTTPException(status_code=400, detail="; ".join(errors))
-        df['geojson'] = geojson_results
-        output = io.StringIO()
-        df.to_csv(output, index=False)
-        output.seek(0)
-        processed_content = output.getvalue().encode('utf-8')
-        new_csv = CSVFile(filename=file.filename, file_content=processed_content, username=username, user_id=user_id)
-        db.add(new_csv)
-        db.commit()
-        response = StreamingResponse(
-            io.BytesIO(processed_content),
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename=catchment_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
-        )
-        return response
-    except pd.errors.EmptyDataError:
-        raise HTTPException(status_code=400, detail="CSV file is empty or invalid")
-    except pd.errors.ParserError as e:
-        raise HTTPException(status_code=400, detail=f"Error parsing CSV: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error processing file: {str(e)}")
-        error_message = f"Error processing file: {str(e)}"
-        if 'errors' in locals() and errors:
-            error_message += f"; Row errors: {'; '.join(errors)}"
-        raise HTTPException(status_code=500, detail=error_message)
+@router.get("/csv-status/{csv_id}")
+def get_csv_status(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    csv_file = db.query(CSVFile).filter(CSVFile.id == csv_id).first()
+    if not csv_file:
+        raise HTTPException(status_code=404, detail="CSV file not found")
+    return {"csv_id": csv_file.id, "status": csv_file.status}
 
 @router.get("/csv/{csv_id}")
 def get_csv_file(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     csv_file = db.query(CSVFile).filter(CSVFile.id == csv_id).first()
     if not csv_file:
         raise HTTPException(status_code=404, detail="CSV file not found")
+    if csv_file.status != 'done':
+        raise HTTPException(status_code=400, detail="CSV file is not ready yet. Current status: {}".format(csv_file.status))
     return Response(
         content=csv_file.file_content,
         media_type="text/csv",

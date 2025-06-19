@@ -8,4 +8,5 @@ class CSVFile(Base):
     file_content = Column(LargeBinary)
     username = Column(String, index=True, nullable=True)
     user_id = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=func.now()) 
+    created_at = Column(DateTime, default=func.now())
+    status = Column(String, default='pending', nullable=False) 
