@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
 
@@ -58,9 +59,12 @@ class LeptonMapsClient:
             self.conn.request("GET", full_path, headers=self.headers)
             resp = self.conn.getresponse()
             body = resp.read()
+            if resp.status == 402:
+                logger.error("HTTP 402: Not enough credits on Lepton Maps API")
+                raise http.client.HTTPException("Lepton Maps API: Not enough credits (HTTP 402). Please check your API quota or upgrade your plan.")
             if resp.status != 200:
                 logger.error(f"HTTP {resp.status}: {body.decode()}")
-                raise http.client.HTTPException(f"Unexpected status {resp.status}")
+                raise http.client.HTTPException(f"Unexpected status {resp.status}: {body.decode()}")
             geojson = json.loads(body)
             logger.info("Successfully fetched catchment GeoJSON")
             return geojson
@@ -124,12 +128,12 @@ async def bulk_process_catchments(file: UploadFile = File(...), current_user: di
         if missing_columns:
             raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing_columns)}")
         errors = []
-        geojson_results = []
+        geojson_results = [None] * len(df)
         api_key = os.environ.get("LEPTON_API_KEY")
         if not api_key:
             raise HTTPException(status_code=500, detail="Lepton Maps API key not set in environment variable LEPTON_API_KEY")
-        client = LeptonMapsClient(api_key=api_key)
-        for idx, row in df.iterrows():
+
+        def process_row(idx, row):
             row_errors = []
             seller_id = row['seller_id']
             provider_id = row['provider_id']
@@ -154,15 +158,24 @@ async def bulk_process_catchments(file: UploadFile = File(...), current_user: di
             geojson_str = '{}'
             if not row_errors and lat is not None and lon is not None:
                 try:
+                    client = LeptonMapsClient(api_key=api_key)  # create a new client per thread
                     geojson = client.get_catchment_geojson(latitude=lat, longitude=lon)
                     polygon_geojson = client.extract_polygon_geojson(geojson)
                     geojson_str = json.dumps(polygon_geojson)
                 except Exception as e:
                     logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
                     row_errors.append(f"GeoJSON error: {str(e)}")
-            geojson_results.append(geojson_str)
-            if row_errors:
-                errors.append(f"Row {idx+1}: {'; '.join(row_errors)}")
+            return idx, geojson_str, row_errors
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(process_row, idx, row) for idx, row in df.iterrows()]
+            for future in as_completed(futures):
+                idx, geojson_str, row_errors = future.result()
+                geojson_results[idx] = geojson_str
+                if row_errors:
+                    errors.append(f"Row {idx+1}: {'; '.join(row_errors)}")
+
         if errors:
             raise HTTPException(status_code=400, detail="; ".join(errors))
         df['geojson'] = geojson_results
