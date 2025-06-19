@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment
+.env
+
+# macOS
+.DS_Store
+
+# Database
+*.db
+*.sqlite3
+jwt_blacklist.db
+postgres_data/
+
+# Alembic
+alembic/versions/*.pyc
+
+# Docker
+docker-compose.override.yml
+
+# Test & type cache
+.pytest_cache/
+.mypy_cache/
+
+# Editors
+.vscode/
+.idea/
+
+# Coverage
+.coverage
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Virtualenv
+.venv/
+venv/
+env/ 
