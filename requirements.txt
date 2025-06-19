@@ -7,3 +7,5 @@ python-jose
 pandas
 python-dotenv
 python-multipart
+slowapi
+starlette
