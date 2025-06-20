@@ -15,29 +15,38 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
 
 ## Setup
 
-1. **Clone the repo and install dependencies:**
+### Local Development
 
+1. **Clone the repo and install dependencies:**
    ```sh
    pip install -r requirements.txt
    ```
 2. **Set environment variables in a `.env` file:**
-
    ```env
    DATABASE_URL=postgresql://<user>:<password>@<host>:<port>/<database>
    SECRET_KEY=your_secret_key
    LEPTON_API_KEY=your_leptonmaps_api_key
    WEBHOOK_URL=https://your-frontend-or-webhook-endpoint.com/webhook
+   CORS_ORIGINS=*
+   RATE_LIMIT=100/minute
+   ENV=development
    ```
 3. **Run Alembic migrations:**
-
    ```sh
    alembic upgrade head
    ```
 4. **Start the server:**
-
    ```sh
    uvicorn main:app --reload
    ```
+
+### Docker Compose
+
+1. **Build and start the services:**
+   ```sh
+   docker-compose up --build
+   ```
+2. **The API will be available at** `http://localhost:8000`
 
 ## API Endpoints
 
@@ -66,9 +75,9 @@ Login using a JWT token only. Returns the username if valid.
   ```
 
 ### **POST /auth/logout**
-Blacklist the current JWT token.
+Blacklist the current JWT token and delete the user.
 - **Request:** Bearer token in Authorization header
-- **Response:** `{ "msg": "Logged out successfully" }`
+- **Response:** `{ "msg": "Logged out successfully and user deleted" }`
 - **Authentication:** Required
 - **Curl:**
   ```sh
@@ -100,6 +109,7 @@ Upload a CSV for bulk processing. Each row is validated and processed asynchrono
   - **File size:** Max 2MB
   - **Row count:** Max 1000 rows
   - **No duplicate rows allowed**
+  - **No duplicate `location_id` values allowed**
   - **Required columns:** `snp_id`, `provider_id`, `location_id`, `location_gps`, `drive_distance`, `drive_time`
   - **snp_id, provider_id, location_id:**
     - Non-empty string, max 255 characters
@@ -112,15 +122,15 @@ Upload a CSV for bulk processing. Each row is validated and processed asynchrono
     - No extra whitespace
   - **drive_distance, drive_time:**
     - At least one must be provided and non-empty per row
-    - Must be positive integers if present
+    - Must be positive integers if present (accepts both `500` and `500.0`)
     - `drive_distance` takes precedence if both are provided
     - Reasonable upper bounds: `drive_distance` ≤ 100,000, `drive_time` ≤ 10,000
   - **If any row fails validation, the entire file is marked as failed and errors are returned in the status endpoint.**
 - **Sample CSV:**
   ```csv
   snp_id,provider_id,location_id,location_gps,drive_distance,drive_time
-  sample_seller,sample_provider,L1,"12.3400,56.7800",500,
-  another_seller,provider2,L2,"-45.1234,89.5678",,120
+  sample_seller,sample_provider,L1,"28.5065162,77.073938",500,
+  sample_seller,sample_provider,L2,"30.7135305,76.7454157",,20
   ```
 - **Error Reporting:**
   - If the file fails, `/catchment/csv-status/{csv_id}` returns:
@@ -193,3 +203,5 @@ When a CSV is processed and status is set to `done`, the backend will automatica
 - All endpoints requiring authentication need the `Authorization: Bearer <access_token>` header.
 - The JWT blacklist is cleaned up automatically on server startup and can be triggered manually via the admin endpoint.
 - Use Alembic for all future database schema changes.
+- The backend is robust to whitespace, empty, and float values in integer fields in CSV uploads.
+- For deployment, see the provided `Dockerfile` and `docker-compose.yml` for production-ready setup.
