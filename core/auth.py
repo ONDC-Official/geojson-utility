@@ -9,6 +9,7 @@ import uuid
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, func as sa_func
+from typing import Optional
 
 load_dotenv()
 
@@ -22,21 +23,20 @@ token_blacklist_engine = create_engine("sqlite:///jwt_blacklist.db")
 SQLiteBase.metadata.create_all(bind=token_blacklist_engine)
 TokenBlacklistSession = sessionmaker(autocommit=False, autoflush=False, bind=token_blacklist_engine)
 
-def create_access_token(data: dict, expires_delta: timedelta = None):
+def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     jti = str(uuid.uuid4())
-    to_encode.update({"exp": expire, "jti": jti})
+    to_encode.update({"jti": jti})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt, jti
 
-def blacklist_jwt(jti: str, db: Session = None):
+def blacklist_jwt(jti: str, db: Optional[Session] = None):
     session = TokenBlacklistSession()
     session.add(JWTBlacklistSQLite(jti=jti))
     session.commit()
     session.close()
 
-def is_token_blacklisted(jti: str, db: Session = None) -> bool:
+def is_token_blacklisted(jti: str, db: Optional[Session] = None) -> bool:
     session = TokenBlacklistSession()
     result = session.query(JWTBlacklistSQLite).filter(JWTBlacklistSQLite.jti == jti).first() is not None
     session.close()
@@ -53,8 +53,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
         return {"username": username, "jti": jti}
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 

@@ -17,4 +17,12 @@ def authenticate_user(db: Session, username: str, password: str):
     user = get_user_by_username(db, username)
     if not user or not verify_password(password, user.hashed_password):
         return None
-    return user 
+    return user
+
+def delete_user_by_username(db: Session, username: str):
+    user = get_user_by_username(db, username)
+    if user:
+        db.delete(user)
+        db.commit()
+        return True
+    return False 

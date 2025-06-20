@@ -2,38 +2,48 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from schemas.user import UserCreate, UserRead, UserLogin
 from schemas.token import Token
-from crud.user import get_user_by_username, create_user, authenticate_user
+from crud.user import get_user_by_username, create_user, authenticate_user, delete_user_by_username
 from core.auth import create_access_token, get_current_user, blacklist_jwt
 from db.session import get_db
 from core.limiter import limiter
+from fastapi.security import HTTPAuthorizationCredentials
+from typing import Optional
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-@router.post("/register", response_model=UserRead)
+@router.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
     db_user = get_user_by_username(db, user.username)
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
-    return create_user(db, user.username, user.password)
-
-@router.post("/login", response_model=Token)
-@limiter.limit("5/minute")
-def login(request: Request, user_credentials: UserLogin, db: Session = Depends(get_db)):
-    user = authenticate_user(db, user_credentials.username, user_credentials.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token, jti = create_access_token(data={"sub": user.username})
+    created_user = create_user(db, user.username, user.password)
+    access_token, jti = create_access_token(data={"sub": created_user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/login")
+@limiter.limit("5/minute")
+async def login(request: Request, token: Optional[str] = None):
+    # Accept JWT token in the request body as {"token": "..."}
+    if not token:
+        try:
+            body = await request.json()
+            token = body.get("token")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Token required in request body.")
+    if not token:
+        raise HTTPException(status_code=400, detail="Token required in request body.")
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    user = get_current_user(credentials)
+    return {"username": user["username"]}
 
 @router.post("/logout")
 def logout(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         jti = current_user['jti']
         blacklist_jwt(jti, db)
-        return {"msg": "Logged out successfully"}
+        # Remove user from database
+        username = current_user['username']
+        delete_user_by_username(db, username)
+        return {"msg": "Logged out successfully and user deleted"}
     except Exception:
-        raise HTTPException(status_code=500, detail="Error blacklisting JWT") 
+        raise HTTPException(status_code=500, detail="Error blacklisting JWT and deleting user") 

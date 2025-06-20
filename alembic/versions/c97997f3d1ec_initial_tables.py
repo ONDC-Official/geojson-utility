@@ -28,6 +28,9 @@ def upgrade() -> None:
     sa.Column('username', sa.String(), nullable=True),
     sa.Column('user_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.Column('status', sa.String(), nullable=False, server_default='pending'),
+    sa.Column('drive_distance', sa.Integer(), nullable=True),
+    sa.Column('drive_time', sa.Integer(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_csv_files_filename'), 'csv_files', ['filename'], unique=False)

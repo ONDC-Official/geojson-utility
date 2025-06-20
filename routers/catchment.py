@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.limiter import limiter
 import threading
 import httpx
+import re
 
 load_dotenv()
 
@@ -43,14 +44,15 @@ class LeptonMapsClient:
         }
         self.conn = http.client.HTTPSConnection(self.HOST)
 
-    def get_catchment_geojson(self, latitude: float, longitude: float, catchment_type: str = "DRIVE_DISTANCE", accuracy_time_based: str = "HIGH", drive_distance: int = 500, drive_time: Optional[int] = None, departure_time: Optional[str] = None) -> dict:
+    def get_catchment_geojson(self, latitude: float, longitude: float, catchment_type: str, accuracy_time_based: str = "HIGH", drive_distance: Optional[int] = None, drive_time: Optional[int] = None, departure_time: Optional[str] = None) -> dict:
         params = {
             "latitude": latitude,
             "longitude": longitude,
             "catchment_type": catchment_type,
-            "accuracy_time_based": accuracy_time_based,
-            "drive_distance": drive_distance
+            "accuracy_time_based": accuracy_time_based
         }
+        if drive_distance is not None:
+            params["drive_distance"] = drive_distance
         if drive_time is not None:
             params["drive_time"] = drive_time
         if departure_time is not None:
@@ -113,10 +115,13 @@ router = APIRouter(prefix="/catchment", tags=["catchment"])
 def get_sample_csv():
     output = io.StringIO()
     SAMPLE_CSV_ROW = {
-    'seller_id': ['sample_seller'],
-    'provider_id': ['sample_provider'],
-    'lat': [28.6139],
-    'long': [77.2090]}
+        'snp_id': ['sample_seller'],
+        'provider_id': ['sample_provider'],
+        'location_id': ['L1'],
+        'location_gps': ['12.3400,56.7800'],
+        'drive_distance': [500],
+        'drive_time': [None]
+    }
     sample_df = pd.DataFrame(SAMPLE_CSV_ROW)
     sample_df.to_csv(output, index=False)
     output.seek(0)
@@ -125,20 +130,32 @@ def get_sample_csv():
 @router.post("/bulk")
 @limiter.limit("10/minute")
 async def bulk_process_catchments(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="File must be a CSV")
+    # File size limit (2MB)
     content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="CSV file too large (max 2MB)")
+    if not file.filename or not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="File must be a CSV with a valid filename")
     if not content:
         raise HTTPException(status_code=400, detail="CSV file is empty.")
+    # Row count limit (1000 rows)
+    df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+    if len(df) > 1000:
+        raise HTTPException(status_code=400, detail="CSV file has too many rows (max 1000)")
+    # Check for duplicate rows
+    if df.duplicated().any():
+        raise HTTPException(status_code=400, detail="CSV file contains duplicate rows.")
+    # Check for duplicate location_id
+    if df['location_id'].duplicated().any():
+        dups = df[df['location_id'].duplicated(keep=False)]['location_id'].tolist()
+        raise HTTPException(status_code=400, detail=f"CSV file contains duplicate location_id values: {set(dups)}")
     username = current_user.get('username')
     user_id = current_user.get('user_id') if 'user_id' in current_user else None
-    # Save file as pending
     new_csv = CSVFile(filename=file.filename, file_content=content, username=username, user_id=user_id, status='pending')
     db.add(new_csv)
     db.commit()
     db.refresh(new_csv)
     csv_id = new_csv.id
-    # Start background processing
     def process_csv_in_background(csv_id, content, username, user_id):
         session = next(get_db())
         try:
@@ -148,10 +165,12 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             csv_file.status = 'processing'
             session.commit()
             df = pd.read_csv(io.StringIO(content.decode('utf-8')))
-            required_columns = {'seller_id', 'provider_id', 'lat', 'long'}
+            required_columns = {'snp_id', 'provider_id', 'location_id', 'location_gps', 'drive_distance', 'drive_time'}
             missing_columns = required_columns - set(df.columns)
             if missing_columns:
                 csv_file.status = 'failed'
+                csv_file.file_content = b''
+                csv_file.error = f"Missing columns: {', '.join(missing_columns)}"
                 session.commit()
                 return
             errors = []
@@ -159,35 +178,113 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             api_key = os.environ.get("LEPTON_API_KEY")
             if not api_key:
                 csv_file.status = 'failed'
+                csv_file.error = "LEPTON_API_KEY not set"
                 session.commit()
                 return
+            def validate_location_gps(value):
+                if not isinstance(value, str):
+                    return False
+                value = value.strip()
+                parts = value.split(',')
+                if len(parts) != 2:
+                    return False
+                try:
+                    lat = float(parts[0])
+                    lon = float(parts[1])
+                except Exception:
+                    return False
+                # Check for at least 4 decimals
+                lat_dec = parts[0].split('.')[-1] if '.' in parts[0] else ''
+                lon_dec = parts[1].split('.')[-1] if '.' in parts[1] else ''
+                if len(lat_dec) < 4 or len(lon_dec) < 4:
+                    return False
+                # Check range
+                if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                    return False
+                # No extra whitespace
+                if parts[0].strip() != parts[0] or parts[1].strip() != parts[1]:
+                    return False
+                return True
+            def validate_id_field(field, value):
+                if not value:
+                    return f"{field} must be a non-empty string."
+                if len(value) > 255:
+                    return f"{field} must be at most 255 characters."
+                if not re.match(r'^[\w\-]+$', value):
+                    return f"{field} contains invalid characters."
+                if value.strip() != value:
+                    return f"{field} must not have leading/trailing whitespace."
+                return None
+            def parse_int(val):
+                try:
+                    return int(str(val).strip())
+                except ValueError:
+                    try:
+                        return int(float(str(val).strip()))
+                    except Exception:
+                        return None
+            def is_present(val):
+                return val is not None and not pd.isnull(val) and str(val).strip() != ''
             def process_row(idx, row):
                 row_errors = []
-                seller_id = row['seller_id']
-                provider_id = row['provider_id']
-                try:
-                    lat = float(row['lat'])
+                snp_id = str(row['snp_id']).strip()
+                provider_id = str(row['provider_id']).strip()
+                location_id = str(row['location_id']).strip()
+                location_gps = str(row['location_gps']).strip()
+                drive_distance = row.get('drive_distance')
+                drive_time = row.get('drive_time')
+                # Validate id fields
+                for field, value in [('snp_id', snp_id), ('provider_id', provider_id), ('location_id', location_id)]:
+                    err = validate_id_field(field, value)
+                    if err:
+                        row_errors.append(err)
+                # Validate location_gps
+                if not validate_location_gps(location_gps):
+                    row_errors.append("location_gps must be a string with two comma-separated floats, each with at least 4 decimals, valid range, and no extra whitespace.")
+                else:
+                    lat, lon = map(float, location_gps.split(','))                    # Format lat/lon to 4 decimals as strings
+                    lat_str = f"{lat:.4f}"
+                    lon_str = f"{lon:.4f}"
                     if not (-90 <= lat <= 90):
-                        row_errors.append(f"lat must be between -90 and 90.")
-                except Exception:
-                    row_errors.append(f"lat must be a valid float.")
-                    lat = None
-                try:
-                    lon = float(row['long'])
+                        row_errors.append("latitude in location_gps must be between -90 and 90.")
                     if not (-180 <= lon <= 180):
-                        row_errors.append(f"long must be between -180 and 180.")
-                except Exception:
-                    row_errors.append(f"long must be a valid float.")
-                    lon = None
-                if not isinstance(seller_id, str) or not seller_id:
-                    row_errors.append("seller_id must be a non-empty string.")
-                if not isinstance(provider_id, str) or not provider_id:
-                    row_errors.append("provider_id must be a non-empty string.")
+                        row_errors.append("longitude in location_gps must be between -180 and 180.")
+                # Use drive_distance if present, else drive_time, but require at least one
+                use_drive_distance = False
+                drive_distance_val = None
+                drive_time_val = None
+                if not is_present(drive_distance) and not is_present(drive_time):
+                    row_errors.append("Either drive_distance or drive_time must be provided and non-empty.")
+                else:
+                    if is_present(drive_distance):
+                        drive_distance_val = parse_int(drive_distance)
+                        if drive_distance_val is None:
+                            row_errors.append("drive_distance must be an integer if present.")
+                        elif drive_distance_val <= 0:
+                            row_errors.append("drive_distance must be a positive integer.")
+                        elif drive_distance_val > 100000:
+                            row_errors.append("drive_distance is unreasonably large.")
+                        else:
+                            use_drive_distance = True
+                    if not use_drive_distance and is_present(drive_time):
+                        drive_time_val = parse_int(drive_time)
+                        if drive_time_val is None:
+                            row_errors.append("drive_time must be an integer if present.")
+                        elif drive_time_val <= 0:
+                            row_errors.append("drive_time must be a positive integer.")
+                        elif drive_time_val > 10000:
+                            row_errors.append("drive_time is unreasonably large.")
                 geojson_str = '{}'
-                if not row_errors and lat is not None and lon is not None:
+                if not row_errors and 'lat' in locals() and 'lon' in locals():
                     try:
                         client = LeptonMapsClient(api_key=api_key)
-                        geojson = client.get_catchment_geojson(latitude=lat, longitude=lon)
+                        if use_drive_distance and drive_distance_val is not None:
+                            geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_DISTANCE', drive_distance=drive_distance_val)
+                        elif drive_time_val is not None:
+                            geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_TIME', drive_time=drive_time_val)
+                        else:
+                            row_errors.append("Either drive_distance or drive_time must be provided and valid.")
+                            return idx, geojson_str, row_errors
                         polygon_geojson = client.extract_polygon_geojson(geojson)
                         geojson_str = json.dumps(polygon_geojson)
                     except Exception as e:
@@ -203,6 +300,7 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                         errors.append(f"Row {idx+1}: {'; '.join(row_errors)}")
             if errors:
                 csv_file.status = 'failed'
+                csv_file.error = '\n'.join(errors)
                 session.commit()
                 return
             df['geojson'] = geojson_results
@@ -212,8 +310,8 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             processed_content = output.getvalue().encode('utf-8')
             csv_file.file_content = processed_content
             csv_file.status = 'done'
+            csv_file.error = None
             session.commit()
-            # Send webhook after processing is done
             webhook_url = os.getenv("WEBHOOK_URL")
             if webhook_url:
                 try:
@@ -235,6 +333,7 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             csv_file = session.query(CSVFile).filter(CSVFile.id == csv_id).first()
             if csv_file:
                 csv_file.status = 'failed'
+                csv_file.error = str(e)
                 session.commit()
         finally:
             session.close()
@@ -246,7 +345,10 @@ def get_csv_status(csv_id: int, db: Session = Depends(get_db), current_user: dic
     csv_file = db.query(CSVFile).filter(CSVFile.id == csv_id).first()
     if not csv_file:
         raise HTTPException(status_code=404, detail="CSV file not found")
-    return {"csv_id": csv_file.id, "status": csv_file.status}
+    response = {"csv_id": csv_file.id, "status": csv_file.status}
+    if csv_file.status == 'failed' and hasattr(csv_file, 'error') and csv_file.error:
+        response["error"] = csv_file.error
+    return response
 
 @router.get("/csv/{csv_id}")
 def get_csv_file(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

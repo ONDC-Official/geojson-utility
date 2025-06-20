@@ -4,9 +4,10 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
 
 ## Features
 
-- User registration, login, and logout (JWT-based)
-- Upload CSVs and process each row with the Lepton Maps API
-- Download processed CSVs (with geojson column for each row)
+- User registration, JWT issuance (no expiration)
+- Login using JWT token only
+- Upload and process CSVs with geospatial data (Lepton Maps API)
+- Download processed CSVs (with geojson column)
 - List uploaded CSVs
 - JWT blacklist with automatic cleanup (every 7 days)
 - Admin endpoint for manual blacklist cleanup
@@ -24,7 +25,6 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
    ```env
    DATABASE_URL=postgresql://<user>:<password>@<host>:<port>/<database>
    SECRET_KEY=your_secret_key
-   ACCESS_TOKEN_EXPIRE_MINUTES=30
    LEPTON_API_KEY=your_leptonmaps_api_key
    WEBHOOK_URL=https://your-frontend-or-webhook-endpoint.com/webhook
    ```
@@ -39,102 +39,137 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
    uvicorn main:app --reload
    ```
 
-## API Endpoints & Detailed Explanations
+## API Endpoints
 
 ### **POST /auth/register**
-**Register a new user.**
-- **Request:** JSON `{ "username": "string", "password": "string" }`
-- **Response:** User info (without password)
-- **Authentication:** Not required
-```sh
-curl -X POST http://localhost:8000/auth/register \
-  -H 'Content-Type: application/json' \
-  -d '{"username": "testuser1", "password": "testpass"}'
-```
-
-### **POST /auth/login**
-**Authenticate and get a JWT access token.**
-- **Request:** JSON `{ "username": "string", "password": "string" }`
+Register a new user and receive a JWT token (no expiration).
+- **Request:** `{ "username": "string", "password": "string" }`
 - **Response:** `{ "access_token": "...", "token_type": "bearer" }`
 - **Authentication:** Not required
-```sh
-curl -X POST http://localhost:8000/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username": "testuser1", "password": "testpass"}'
-```
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/auth/register \
+    -H 'Content-Type: application/json' \
+    -d '{"username": "testuser1", "password": "testpass"}'
+  ```
+
+### **POST /auth/login**
+Login using a JWT token only. Returns the username if valid.
+- **Request:** `{ "token": "<jwt_token>" }`
+- **Response:** `{ "username": "..." }`
+- **Authentication:** Not required
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"token": "<jwt_token>"}'
+  ```
 
 ### **POST /auth/logout**
-**Logout and blacklist the current JWT token.**
-- **Request:** No body
+Blacklist the current JWT token.
+- **Request:** Bearer token in Authorization header
 - **Response:** `{ "msg": "Logged out successfully" }`
-- **Authentication:** Required (Bearer token)
-```sh
-curl -X POST http://localhost:8000/auth/logout \
-  -H 'Authorization: Bearer <access_token>'
-```
+- **Authentication:** Required
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/auth/logout \
+    -H 'Authorization: Bearer <jwt_token>'
+  ```
 
 ### **GET /catchment/sample-csv**
-**Download a sample CSV template for bulk upload.**
-- **Request:** No body
+Download a sample CSV template for bulk upload.
 - **Response:** CSV file (Content-Disposition: attachment)
 - **Authentication:** Not required
-```sh
-curl -O -J http://localhost:8000/catchment/sample-csv
-```
+- **Curl:**
+  ```sh
+  curl -O -J http://localhost:8000/catchment/sample-csv
+  ```
 
 ### **POST /catchment/bulk**
-**Upload a CSV for bulk processing.**
+Upload a CSV for bulk processing. Each row is validated and processed asynchronously.
 - **Request:** Multipart form with a CSV file (`file=@sample.csv`)
 - **Response:** `{ "csv_id": <id>, "status": "pending" }`
 - **Authentication:** Required (Bearer token)
-- **Notes:**
-  - The CSV is processed asynchronously. Each row is enriched with a `geojson` column.
-  - The status can be checked via `/catchment/csv-status/{csv_id}`.
-```sh
-curl -X POST http://localhost:8000/catchment/bulk \
-  -H 'Authorization: Bearer <access_token>' \
-  -F 'file=@sample.csv'
-```
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/catchment/bulk \
+    -H 'Authorization: Bearer <jwt_token>' \
+    -F 'file=@sample.csv'
+  ```
+- **CSV and Field Validations:**
+  - **File size:** Max 2MB
+  - **Row count:** Max 1000 rows
+  - **No duplicate rows allowed**
+  - **Required columns:** `snp_id`, `provider_id`, `location_id`, `location_gps`, `drive_distance`, `drive_time`
+  - **snp_id, provider_id, location_id:**
+    - Non-empty string, max 255 characters
+    - Only alphanumeric, underscore, and dash allowed
+    - No leading/trailing whitespace
+  - **location_gps:**
+    - String with two comma-separated floats (latitude,longitude)
+    - Each float must have at least 4 decimal places
+    - Latitude must be between -90 and 90, longitude between -180 and 180
+    - No extra whitespace
+  - **drive_distance, drive_time:**
+    - At least one must be provided and non-empty per row
+    - Must be positive integers if present
+    - `drive_distance` takes precedence if both are provided
+    - Reasonable upper bounds: `drive_distance` ≤ 100,000, `drive_time` ≤ 10,000
+  - **If any row fails validation, the entire file is marked as failed and errors are returned in the status endpoint.**
+- **Sample CSV:**
+  ```csv
+  snp_id,provider_id,location_id,location_gps,drive_distance,drive_time
+  sample_seller,sample_provider,L1,"12.3400,56.7800",500,
+  another_seller,provider2,L2,"-45.1234,89.5678",,120
+  ```
+- **Error Reporting:**
+  - If the file fails, `/catchment/csv-status/{csv_id}` returns:
+    ```json
+    {
+      "csv_id": 1,
+      "status": "failed",
+      "error": "Row 2: drive_distance must be a positive integer.\nRow 3: location_gps must be a string with two comma-separated floats, each with at least 4 decimals, valid range, and no extra whitespace."
+    }
+    ```
 
 ### **GET /catchment/csv-status/{csv_id}**
-**Check the processing status of a CSV.**
-- **Request:** No body
-- **Response:** `{ "csv_id": <id>, "status": "pending|processing|done|failed" }`
-- **Authentication:** Required (Bearer token)
-```sh
-curl -X GET http://localhost:8000/catchment/csv-status/1 \
-  -H 'Authorization: Bearer <access_token>'
-```
+Check the processing status of a CSV.
+- **Response:** `{ "csv_id": <id>, "status": "pending|processing|done|failed", "error": "..." (if failed) }`
+- **Authentication:** Required
+- **Curl:**
+  ```sh
+  curl -X GET http://localhost:8000/catchment/csv-status/1 \
+    -H 'Authorization: Bearer <jwt_token>'
+  ```
 
 ### **GET /catchment/csv/{csv_id}**
-**Download the processed CSV by its ID.**
-- **Request:** No body
+Download the processed CSV by its ID (only available when status is `done`).
 - **Response:** CSV file (Content-Disposition: attachment)
-- **Authentication:** Required (Bearer token)
-- **Notes:** Only available when status is `done`.
-```sh
-curl -X GET http://localhost:8000/catchment/csv/1 \
-  -H 'Authorization: Bearer <access_token>' -O -J
-```
+- **Authentication:** Required
+- **Curl:**
+  ```sh
+  curl -X GET http://localhost:8000/catchment/csv/1 \
+    -H 'Authorization: Bearer <jwt_token>' -O -J
+  ```
 
 ### **GET /catchment/csvs**
-**List all uploaded/processed CSVs for the current user.**
-- **Request:** No body
+List all uploaded/processed CSVs for the current user.
 - **Response:** Array of CSV file metadata (id, filename, username, user_id, created_at)
-- **Authentication:** Required (Bearer token)
-```sh
-curl -X GET http://localhost:8000/catchment/csvs \
-  -H 'Authorization: Bearer <access_token>'
-```
+- **Authentication:** Required
+- **Curl:**
+  ```sh
+  curl -X GET http://localhost:8000/catchment/csvs \
+    -H 'Authorization: Bearer <jwt_token>'
+  ```
 
 ### **POST /admin/cleanup-blacklist**
-**Manually trigger cleanup of expired JWT blacklist entries (older than 7 days).**
-- **Request:** No body
+Manually trigger cleanup of expired JWT blacklist entries (older than 7 days).
 - **Response:** `{ "deleted": <number_of_entries_deleted> }`
 - **Authentication:** Not required (but should be protected in production)
-```sh
-curl -X POST http://localhost:8000/admin/cleanup-blacklist
-```
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/admin/cleanup-blacklist
+  ```
 
 ## Webhook Notification on CSV Processing
 
