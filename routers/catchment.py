@@ -297,7 +297,11 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                         geojson_str = json.dumps(polygon_geojson)
                     except Exception as e:
                         logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
-                        row_errors.append(f"GeoJSON error: {str(e)}")
+                        # User-friendly error message for Lepton Maps API errors
+                        if isinstance(e, HTTPException) and 'Lepton Maps API' in str(e.detail):
+                            row_errors.append("Lepton Maps API error: The provided coordinates are not supported or not found.")
+                        else:
+                            row_errors.append(f"GeoJSON error: {str(e)}")
                 return idx, geojson_str, row_errors
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = [executor.submit(process_row, idx, row) for idx, row in df.iterrows()]
