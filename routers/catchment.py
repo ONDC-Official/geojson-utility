@@ -139,9 +139,17 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
     if not content:
         raise HTTPException(status_code=400, detail="CSV file is empty.")
     # Row count limit (1000 rows)
-    df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+    try:
+        df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
     if len(df) > 1000:
         raise HTTPException(status_code=400, detail="CSV file has too many rows (max 1000)")
+    # Check for required columns
+    required_columns = {'snp_id', 'provider_id', 'location_id', 'location_gps', 'drive_distance', 'drive_time'}
+    missing_columns = required_columns - set(df.columns)
+    if missing_columns:
+        raise HTTPException(status_code=400, detail=f"CSV file is missing required columns: {', '.join(missing_columns)}")
     # Check for duplicate rows
     if df.duplicated().any():
         raise HTTPException(status_code=400, detail="CSV file contains duplicate rows.")
