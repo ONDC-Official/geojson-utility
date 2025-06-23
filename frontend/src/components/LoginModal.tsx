@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Modal, Form, Input, Button, message } from "antd";
-import { UserOutlined, LockOutlined } from "@ant-design/icons";
+import { LockOutlined } from "@ant-design/icons";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import { LoginCredentials } from "../types/auth";
