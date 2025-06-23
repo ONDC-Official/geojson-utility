@@ -64,7 +64,7 @@ const StepContent: React.FC<StepContentProps> = ({
 
       message.success({
         content: "CSV file downloaded successfully!",
-        duration: 4,
+        duration: 2,
       });
     } catch (error) {
       if (error.response && error.response.status === 401) {
@@ -102,7 +102,7 @@ const StepContent: React.FC<StepContentProps> = ({
 
       message.success({
         content: "CSV file downloaded successfully!",
-        duration: 4,
+        duration: 2,
       });
     } catch (error) {
       if (error.response && error.response.status === 401) {
@@ -194,7 +194,7 @@ const StepContent: React.FC<StepContentProps> = ({
         if (response) {
           message.success({
             content: "File uploaded successfully!",
-            duration: 4,
+            duration: 2,
           });
           const id = response?.data?.csv_id;
           setId(id);
@@ -244,21 +244,29 @@ const StepContent: React.FC<StepContentProps> = ({
           clearInterval(interval);
           message.success({
             content: "CSV Processed successfully!",
-            duration: 4,
+            duration: 2,
           });
         } else if (status === "failed" || status === "fail") {
           clearInterval(interval);
-          message.error({
-            content: "Something went wrong!",
-            duration: 4,
-          });
+          if (response?.data?.error) {
+            message.error({
+              content: response?.data?.error,
+              duration: 8,
+            });
+          } else {
+            message.error({
+              content: "Something went wrong!",
+              duration: 2,
+            });
+          }
+
           setResult("fail");
         }
       } catch (error) {
         if (error.response && error.response.status === 401) {
           message.error({
             content: "Session expired. Please log in again.",
-            duration: 4,
+            duration: 2,
           });
           logout();
         } else {
@@ -347,6 +355,41 @@ const StepContent: React.FC<StepContentProps> = ({
               <Paragraph>
                 Download the CSV template to understand the required data
                 format. This template includes sample data and column headers.
+              </Paragraph>
+              <Paragraph>
+                <ul className="list-disc pl-6 space-y-2 text-gray-700 text-sm">
+                  <li>
+                    <strong>SNP ID:</strong> Unique ID of the BPP in the message
+                    context.
+                  </li>
+                  <li>
+                    <strong>Provider ID:</strong> Unique identifier for a
+                    provider.
+                  </li>
+                  <li>
+                    <strong>Location ID:</strong> ID for a specific provider
+                    location.
+                  </li>
+                  <li>
+                    <strong>Location GPS:</strong> GPS coordinates of the
+                    provider's location in Latitude and longitude .
+                    <code className="bg-gray-100 px-1 rounded">"lat,long"</code>{" "}
+                    format (e.g.,{" "}
+                    <code className="bg-gray-100 px-1 rounded">
+                      "28.6139,77.2090"
+                    </code>
+                    ).
+                  </li>
+
+                  <li>
+                    <strong>Drive Distance:</strong> Value in meters – Drive
+                    distance for catchment.
+                  </li>
+                  <li>
+                    <strong>Drive Time:</strong> Value in minutes – Drive time
+                    for catchment.
+                  </li>
+                </ul>
               </Paragraph>
               <div style={{ textAlign: "center", marginTop: "24px" }}>
                 <Button
