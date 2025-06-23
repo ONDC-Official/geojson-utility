@@ -26,7 +26,7 @@ export const MainContent: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => (
   <Layout.Content
-    className="mt-10 p-10 min-h-[calc(100vh-64px)]"
+    className="mt-2 p-10 min-h-[calc(100vh-64px)]"
     style={{
       background: "linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)",
     }}
@@ -70,12 +70,18 @@ export const InstructionList: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <ul className="list-none p-0 my-6">{children}</ul>;
 
-export const InstructionListItem: React.FC<{ children: React.ReactNode }> = ({
-  children,
-}) => (
-  <li className="py-3 border-b border-gray-100 flex items-center last:border-b-0">
-    <span className="text-green-500 font-bold mr-3 w-5 text-center">✓</span>
-    {children}
+export const InstructionListItem: React.FC<{
+  title: string;
+  children: React.ReactNode;
+}> = ({ title, children }) => (
+  <li className="py-3 border-b border-gray-100 flex items-start last:border-b-0">
+    <span className="text-green-500 font-bold mr-3 w-5 text-center mt-1">
+      ✓
+    </span>
+    <div>
+      <div className="font-semibold text-gray-800">{title}</div>
+      <div className="text-gray-600 text-sm mt-1">{children}</div>
+    </div>
   </li>
 );
 

@@ -15,9 +15,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onCancel }) => {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
-  
   const handleLogin = async (values: LoginCredentials) => {
-  console.log("apiUrl",apiUrl);
     setLoading(true);
     localStorage.setItem("jwt_token", values.token);
     try {
@@ -42,7 +40,11 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onCancel }) => {
     }
   };
   const handleRegister = async () => {
-    window.open("https://your-form-link.com", "_blank", "noopener,noreferrer");
+    window.open(
+      "https://forms.gle/yocysNhb7mkLFZDq5",
+      "_blank",
+      "noopener,noreferrer"
+    );
   };
 
   return (

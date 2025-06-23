@@ -30,6 +30,7 @@ const StepContent: React.FC<StepContentProps> = ({
 }) => {
   const { isAuthenticated, token, logout } = useAuth();
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [next, setNext] = useState(false);
   const [result, setResult] = useState("");
@@ -40,6 +41,7 @@ const StepContent: React.FC<StepContentProps> = ({
   useEffect(() => {
     setNext(false);
     setUploading(false);
+    setFileList([]);
   }, []);
 
   const onNextClick = () => {
@@ -60,10 +62,16 @@ const StepContent: React.FC<StepContentProps> = ({
       link.click();
       link.remove();
 
-      message.success("CSV file downloaded successfully!");
+      message.success({
+        content: "CSV file downloaded successfully!",
+        duration: 4,
+      });
     } catch (error) {
       if (error.response && error.response.status === 401) {
-        message.error("Session expired. Please log in again.");
+        message.error({
+          content: "Session expired. Please log in again.",
+          duration: 4,
+        });
         logout();
       } else {
         console.error("Download failed", error);
@@ -92,13 +100,22 @@ const StepContent: React.FC<StepContentProps> = ({
       link.click();
       link.remove();
 
-      message.success("CSV file downloaded successfully!");
+      message.success({
+        content: "CSV file downloaded successfully!",
+        duration: 4,
+      });
     } catch (error) {
       if (error.response && error.response.status === 401) {
-        message.error("Session expired. Please log in again.");
+        message.error({
+          content: "Session expired. Please log in again.",
+          duration: 4,
+        });
         logout();
       } else {
-        message.error("Download failed");
+        message.error({
+          content: "Download failed",
+          duration: 4,
+        });
       }
     }
   };
@@ -106,16 +123,23 @@ const StepContent: React.FC<StepContentProps> = ({
   const uploadProps: UploadProps = {
     name: "file",
     accept: ".csv",
+    fileList,
     beforeUpload: async (file) => {
       if (!isAuthenticated) {
-        message.error("Please sign in to upload files");
+        message.error({
+          content: "Please sign in to upload files",
+          duration: 4,
+        });
         return false;
       }
 
       const isCsv =
         file.type === "text/csv" || file.name.toLowerCase().endsWith(".csv");
       if (!isCsv) {
-        message.error("You can only upload CSV files!");
+        message.error({
+          content: "You can only upload CSV files!",
+          duration: 4,
+        });
         return false;
       }
 
@@ -133,16 +157,14 @@ const StepContent: React.FC<StepContentProps> = ({
 
       // Basic CSV format check (at least 1 header + 1 data row)
       if (lines.length < 2) {
-        message.error("CSV must have a header and at least one data row.");
+        message.error({
+          content: "CSV must have a header and at least one data row.",
+          duration: 4,
+        });
         return false;
       }
 
-      // Optionally: check if all rows have the same number of columns
-      const columnCount = lines[0].split(",").length;
-      const invalidRows = lines.filter(
-        (line) => line.split(",").length !== columnCount
-      );
-
+      setFileList([file]);
       // Simulate upload progress
       setUploading(true);
       setUploadProgress(0);
@@ -170,18 +192,28 @@ const StepContent: React.FC<StepContentProps> = ({
         );
 
         if (response) {
-          message.success("File uploaded successfully!");
+          message.success({
+            content: "File uploaded successfully!",
+            duration: 4,
+          });
           const id = response?.data?.csv_id;
           setId(id);
           setResult("pending");
           setNext(true);
         }
       } catch (error: any) {
+        setUploadProgress(0);
         if (error.response?.status === 401) {
-          message.error("Session expired. Please log in again.");
+          message.error({
+            content: "Session expired. Please log in again.",
+            duration: 4,
+          });
           logout();
         } else {
-          message.error("File upload failed.");
+          message.error({
+            content: error?.response?.data?.detail,
+            duration: 8,
+          });
         }
       }
 
@@ -190,6 +222,7 @@ const StepContent: React.FC<StepContentProps> = ({
     onRemove: () => {
       setUploadProgress(0);
       setUploading(false);
+      setFileList([]);
     },
   };
 
@@ -209,18 +242,30 @@ const StepContent: React.FC<StepContentProps> = ({
         if (status === "done" || status === "complete") {
           setResult("done");
           clearInterval(interval);
-          message.success("CSV Processed successfully!");
+          message.success({
+            content: "CSV Processed successfully!",
+            duration: 4,
+          });
         } else if (status === "failed" || status === "fail") {
           clearInterval(interval);
-          message.error("Something went wrong!");
+          message.error({
+            content: "Something went wrong!",
+            duration: 4,
+          });
           setResult("fail");
         }
       } catch (error) {
         if (error.response && error.response.status === 401) {
-          message.error("Session expired. Please log in again.");
+          message.error({
+            content: "Session expired. Please log in again.",
+            duration: 4,
+          });
           logout();
         } else {
-          message.error("Facing some issue while fetching file status");
+          message.error({
+            content: "Facing some issue while fetching file status",
+            duration: 4,
+          });
         }
       }
     };
@@ -240,30 +285,40 @@ const StepContent: React.FC<StepContentProps> = ({
       case 0:
         return (
           <StepCard title="Instructions" extra={<FileTextOutlined />}>
-            <Paragraph>
-              Welcome to the ONDC GeoJson Processing Tool. Follow these simple
-              steps to get started:
-            </Paragraph>
+            <Paragraph>Welcome to the ONDC Polygon Service</Paragraph>
             <InstructionList>
-              <InstructionListItem>
-                Use the token received via email to login and access all
-                features
-              </InstructionListItem>
-              <InstructionListItem>
-                Download the sample CSV template from Step 2
-              </InstructionListItem>
-              <InstructionListItem>
-                Prepare your data according to the template format, Use the
-                defined GeoJson and update your store serviceability in your
-                catalog
-              </InstructionListItem>
-              <InstructionListItem>
-                Upload your CSV file in Step 3 for processing and Click on
-                Continue button to generate CSV
+              <InstructionListItem title="Step 1: Generate Token">
+                Submit a token generation request by filling out the form. Once
+                your request is approved, a token will be issued to you. You can
+                access the form by clicking the "Generate Token" button at the
+                top of the page.
+                <br />
+                Use the token sent to your email to log in. This token acts as
+                your access credential for the tool.
               </InstructionListItem>
 
-              <InstructionListItem>
-                Once processing is complete, download the final CSV file
+              <InstructionListItem title="Step 2:Download Sample CSV">
+                Download the sample CSV template provided. This template will
+                guide you in formatting your data correctly before uploading.
+                <br />
+              </InstructionListItem>
+
+              <InstructionListItem title="Step 3: Upload CSV File">
+                Fill in your data following the structure and field requirements
+                shown in the sample CSV. Ensure the format matches exactly to
+                avoid processing errors.
+                <br />
+                Go to Step 3 in the tool interface and upload your completed CSV
+                file. Once uploaded, click the "Next" button to begin
+              </InstructionListItem>
+
+              <InstructionListItem title="Step 4: Download Processed File">
+                After the file is processed in Step 4, a final CSV file will be
+                generated. You can then download this file for your records or
+                further use.
+                <br />
+                Use the provided GeoJSON data to update the serviceable regions
+                in your store catalog accordingly.
               </InstructionListItem>
             </InstructionList>
             {!isAuthenticated && (
@@ -350,7 +405,7 @@ const StepContent: React.FC<StepContentProps> = ({
                   </div>
                 )}
                 {next && (
-                  <div className="flex items-baseline justify-end">
+                  <div className="flex items-baseline justify-end mt-2">
                     <Button
                       type="primary"
                       onClick={onNextClick}
@@ -386,21 +441,21 @@ const StepContent: React.FC<StepContentProps> = ({
         );
       case 3:
         return (
-          <StepCard title="Generate CSV" extra={<UploadOutlined />}>
+          <StepCard title="Download CSV" extra={<UploadOutlined />}>
             {
               <>
-                {next && (
+                {next ? (
                   <div className="flex items-baseline justify-between">
                     <Paragraph>
                       {result === "pending" ? (
                         <>
-                          "Generating the processed CSV file"
-                          <Spin size="small" />
+                          Generating CSV file
+                          <Spin size="small" style={{ margin: "10px" }} />
                         </>
                       ) : result === "fail" ? (
-                        "Failed to generate the CSV file. Please try again later or contact support if the issue persists."
+                        "CSV file generation failed. Please try again later or reach out to support if the problem continues."
                       ) : (
-                        "Now you can download you csv file by clicking on download button here"
+                        "You can now download your CSV file by clicking the Download button."
                       )}
                     </Paragraph>
                     {result === "done" && (
@@ -413,10 +468,12 @@ const StepContent: React.FC<StepContentProps> = ({
                           color: "#fff",
                         }}
                       >
-                        Download processed CSV
+                        Download file
                       </Button>
                     )}
                   </div>
+                ) : (
+                  "To generate and download the processed CSV file, please go back to Step 3, upload your CSV file, and then return to Step 4."
                 )}
               </>
             }

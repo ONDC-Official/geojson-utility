@@ -29,7 +29,7 @@ const Index: React.FC = () => {
       description: "Read the guidelines",
     },
     {
-      title: "Download CSV",
+      title: "Download Sample CSV",
       description: "Get the template file",
     },
     {
@@ -37,8 +37,8 @@ const Index: React.FC = () => {
       description: "Submit your data",
     },
     {
-      title: "Generate CSV",
-      description: "",
+      title: "Download CSV",
+      description: "Generated file",
     },
   ];
 
@@ -47,15 +47,6 @@ const Index: React.FC = () => {
       key: "profile",
       icon: <UserOutlined />,
       label: user?.name || "Profile",
-    },
-    {
-      type: "divider",
-    },
-    {
-      key: "logout",
-      icon: <LogoutOutlined />,
-      label: "Logout",
-      onClick: logout,
     },
   ];
 
@@ -67,6 +58,13 @@ const Index: React.FC = () => {
     setLoginModalOpen(true);
   };
 
+  const handleRegister = async () => {
+    window.open(
+      "https://forms.gle/yocysNhb7mkLFZDq5",
+      "_blank",
+      "noopener,noreferrer"
+    );
+  };
   return (
     <Layout style={{ minHeight: "100vh" }}>
       <StyledHeader>
@@ -81,8 +79,19 @@ const Index: React.FC = () => {
             <LogoImage src={logo} alt="ONDC Logo" />
           </div>
         </LogoContainer>
+        <div className="flex justify-center gap-4 items-center">
+          <Button
+            type="primary"
+            onClick={handleRegister}
+            style={{
+              background:
+                "linear-gradient(90deg, #1c75bc, #4aa1e0 51%, #1c75bc) var(--x, 100%) / 200%",
+              color: "#fff",
+            }}
+          >
+            Generate Token
+          </Button>
 
-        <div>
           {isAuthenticated ? (
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <Space style={{ cursor: "pointer" }}>
