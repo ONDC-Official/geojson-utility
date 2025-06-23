@@ -8,6 +8,7 @@ from db.session import get_db
 from core.limiter import limiter
 from fastapi.security import HTTPAuthorizationCredentials
 from typing import Optional
+from models.user_token import UserToken
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -18,6 +19,10 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already registered")
     created_user = create_user(db, user.username, user.password)
     access_token, jti = create_access_token(data={"sub": created_user.username})
+    # Save the token in the database
+    db_token = UserToken(username=created_user.username, token=access_token)
+    db.add(db_token)
+    db.commit()
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/login")
