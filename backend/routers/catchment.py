@@ -67,16 +67,16 @@ class LeptonMapsClient:
             body_text = body.decode()
             if resp.status == 401:
                 logger.error("HTTP 401: Unauthorized - Lepton Maps API key is invalid or expired")
-                raise HTTPException(status_code=401, detail="Lepton Maps API: Unauthorized (HTTP 401). Your API key is invalid or expired.")
+                raise Exception("Lepton Maps API: Unauthorized (HTTP 401). Your API key is invalid or expired.")
             if resp.status == 403:
                 logger.error("HTTP 403: Forbidden - Lepton Maps API key is not allowed")
-                raise HTTPException(status_code=403, detail="Lepton Maps API: Forbidden (HTTP 403). Your API key does not have access.")
+                raise Exception("Lepton Maps API: Forbidden (HTTP 403). Your API key does not have access.")
             if resp.status == 402:
                 logger.error("HTTP 402: Not enough credits on Lepton Maps API")
-                raise HTTPException(status_code=402, detail="Lepton Maps API: Not enough credits (HTTP 402). Please check your API quota or upgrade your plan.")
+                raise Exception("Lepton Maps API: Not enough credits (HTTP 402). Please check your API quota or upgrade your plan.")
             if resp.status != 200:
                 logger.error(f"HTTP {resp.status}: {body_text}")
-                raise HTTPException(status_code=resp.status, detail=f"Lepton Maps API: Unexpected status {resp.status}: {body_text}")
+                raise Exception(f"Lepton Maps API: Unexpected status {resp.status}: {body_text}")
             geojson = json.loads(body)
             logger.info("Successfully fetched catchment GeoJSON")
             return geojson
@@ -114,15 +114,15 @@ router = APIRouter(prefix="/catchment", tags=["catchment"])
 @router.get("/sample-csv")
 def get_sample_csv():
     output = io.StringIO()
-    SAMPLE_CSV_ROW = {
-        'snp_id': ['sample_seller'],
-        'provider_id': ['sample_provider'],
-        'location_id': ['L1'],
-        'location_gps': ['12.3400,56.7800'],
-        'drive_distance': [500],
-        'drive_time': [None]
+    SAMPLE_CSV_ROWS = {
+        'snp_id': ['snp_1.com', 'snp_2.com'],
+        'provider_id': ['provider1', 'provider2'],
+        'location_id': ['L1', 'L2'],
+        'location_gps': ['28.5065162,77.073938', '30.7135305,76.7454157'],
+        'drive_distance': [500.5, ''],
+        'drive_time': ['', 20.5]
     }
-    sample_df = pd.DataFrame(SAMPLE_CSV_ROW)
+    sample_df = pd.DataFrame(SAMPLE_CSV_ROWS)
     sample_df.to_csv(output, index=False)
     output.seek(0)
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=sample_catchment.csv"})
@@ -130,9 +130,9 @@ def get_sample_csv():
 @router.post("/bulk")
 @limiter.limit("10/minute")
 async def bulk_process_catchments(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    # File size limit (2MB)
+    # File size limit (10MB)
     content = await file.read()
-    if len(content) > 2 * 1024 * 1024:
+    if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="CSV file too large (max 2MB)")
     if not file.filename or not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="File must be a CSV with a valid filename")
@@ -149,7 +149,16 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
     required_columns = {'snp_id', 'provider_id', 'location_id', 'location_gps', 'drive_distance', 'drive_time'}
     missing_columns = required_columns - set(df.columns)
     if missing_columns:
-        raise HTTPException(status_code=400, detail=f"CSV file is missing required columns: {', '.join(missing_columns)}")
+        # Save CSV with errors column
+        df['errors'] = [f"Missing columns: {', '.join(missing_columns)}"] * len(df)
+        output = io.StringIO()
+        df.to_csv(output, index=False)
+        output.seek(0)
+        csv_file.file_content = output.getvalue().encode('utf-8')
+        csv_file.status = 'failed'
+        csv_file.error = f"Missing columns: {', '.join(missing_columns)}"
+        session.commit()
+        return
     # Check for duplicate rows
     if df.duplicated().any():
         raise HTTPException(status_code=400, detail="CSV file contains duplicate rows.")
@@ -173,18 +182,29 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             csv_file.status = 'processing'
             session.commit()
             df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+            errors_per_row = [''] * len(df)
+            geojson_results = [None] * len(df)
             required_columns = {'snp_id', 'provider_id', 'location_id', 'location_gps', 'drive_distance', 'drive_time'}
             missing_columns = required_columns - set(df.columns)
             if missing_columns:
+                # Save CSV with errors column
+                df['errors'] = [f"Missing columns: {', '.join(missing_columns)}"] * len(df)
+                output = io.StringIO()
+                df.to_csv(output, index=False)
+                output.seek(0)
+                csv_file.file_content = output.getvalue().encode('utf-8')
                 csv_file.status = 'failed'
-                csv_file.file_content = b''
                 csv_file.error = f"Missing columns: {', '.join(missing_columns)}"
                 session.commit()
                 return
-            errors = []
-            geojson_results = [None] * len(df)
             api_key = os.environ.get("LEPTON_API_KEY")
             if not api_key:
+                # Save CSV with errors column
+                df['errors'] = ["LEPTON_API_KEY not set"] * len(df)
+                output = io.StringIO()
+                df.to_csv(output, index=False)
+                output.seek(0)
+                csv_file.file_content = output.getvalue().encode('utf-8')
                 csv_file.status = 'failed'
                 csv_file.error = "LEPTON_API_KEY not set"
                 session.commit()
@@ -196,21 +216,21 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                 parts = value.split(',')
                 if len(parts) != 2:
                     return False
+                # Accept and ignore extra whitespace around lat/lon
+                lat_str = parts[0].strip()
+                lon_str = parts[1].strip()
                 try:
-                    lat = float(parts[0])
-                    lon = float(parts[1])
+                    lat = float(lat_str)
+                    lon = float(lon_str)
                 except Exception:
                     return False
                 # Check for at least 4 decimals
-                lat_dec = parts[0].split('.')[-1] if '.' in parts[0] else ''
-                lon_dec = parts[1].split('.')[-1] if '.' in parts[1] else ''
+                lat_dec = lat_str.split('.')[-1] if '.' in lat_str else ''
+                lon_dec = lon_str.split('.')[-1] if '.' in lon_str else ''
                 if len(lat_dec) < 4 or len(lon_dec) < 4:
                     return False
                 # Check range
                 if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-                    return False
-                # No extra whitespace
-                if parts[0].strip() != parts[0] or parts[1].strip() != parts[1]:
                     return False
                 return True
             def validate_id_field(field, value):
@@ -248,16 +268,16 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                         row_errors.append(err)
                 # Validate location_gps
                 if not validate_location_gps(location_gps):
-                    row_errors.append("location_gps must be a string with two comma-separated floats, each with at least 4 decimals, valid range, and no extra whitespace.")
+                    row_errors.append("location_gps must be a string with two comma-separated floats, each with at least 4 decimals, valid range.")
                 else:
-                    lat, lon = map(float, location_gps.split(','))                    # Format lat/lon to 4 decimals as strings
+                    lat_str, lon_str = [x.strip() for x in location_gps.split(',')]
+                    lat, lon = float(lat_str), float(lon_str)
                     lat_str = f"{lat:.4f}"
                     lon_str = f"{lon:.4f}"
                     if not (-90 <= lat <= 90):
                         row_errors.append("latitude in location_gps must be between -90 and 90.")
                     if not (-180 <= lon <= 180):
                         row_errors.append("longitude in location_gps must be between -180 and 180.")
-                # Use drive_distance if present, else drive_time, but require at least one
                 use_drive_distance = False
                 drive_distance_val = None
                 drive_time_val = None
@@ -297,7 +317,6 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                         geojson_str = json.dumps(polygon_geojson)
                     except Exception as e:
                         logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
-                        # User-friendly error message for Lepton Maps API errors
                         if isinstance(e, HTTPException) and 'Lepton Maps API' in str(e.detail):
                             row_errors.append("Lepton Maps API error: The provided coordinates are not supported or not found.")
                         else:
@@ -308,21 +327,21 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                 for future in as_completed(futures):
                     idx, geojson_str, row_errors = future.result()
                     geojson_results[idx] = geojson_str
-                    if row_errors:
-                        errors.append(f"Row {idx+1}: {'; '.join(row_errors)}")
-            if errors:
-                csv_file.status = 'failed'
-                csv_file.error = '\n'.join(errors)
-                session.commit()
-                return
+                    errors_per_row[idx] = '; '.join(row_errors)
             df['geojson'] = geojson_results
+            df['errors'] = errors_per_row
             output = io.StringIO()
             df.to_csv(output, index=False)
             output.seek(0)
             processed_content = output.getvalue().encode('utf-8')
             csv_file.file_content = processed_content
-            csv_file.status = 'done'
-            csv_file.error = None
+
+            if any(errors_per_row):  # If any row has errors
+                csv_file.status = 'failed'
+                csv_file.error = 'Some rows failed, see errors column'
+            else:
+                csv_file.status = 'done'
+                csv_file.error = None
             session.commit()
             webhook_url = os.getenv("WEBHOOK_URL")
             if webhook_url:
@@ -330,7 +349,7 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                     download_url = f"http://localhost:8000/catchment/csv/{csv_id}"
                     payload = {
                         "csv_id": csv_id,
-                        "status": "done",
+                        "status": csv_file.status,
                         "download_url": download_url
                     }
                     response = httpx.post(webhook_url, json=payload, timeout=5)
@@ -346,6 +365,20 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             if csv_file:
                 csv_file.status = 'failed'
                 csv_file.error = str(e)
+                # Try to save whatever DataFrame is available
+                try:
+                    if 'df' in locals() and isinstance(df, pd.DataFrame):
+                        # If geojson_results and errors_per_row exist, add them
+                        if 'geojson_results' in locals() and len(geojson_results) == len(df):
+                            df['geojson'] = geojson_results
+                        if 'errors_per_row' in locals() and len(errors_per_row) == len(df):
+                            df['errors'] = errors_per_row
+                        output = io.StringIO()
+                        df.to_csv(output, index=False)
+                        output.seek(0)
+                        csv_file.file_content = output.getvalue().encode('utf-8')
+                except Exception as inner:
+                    logger.error(f"Failed to save partial CSV on error: {inner}")
                 session.commit()
         finally:
             session.close()
@@ -356,10 +389,12 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
 def get_csv_status(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     csv_file = db.query(CSVFile).filter(CSVFile.id == csv_id).first()
     if not csv_file:
+        logger.info(f"Status check for CSV id={csv_id}: NOT FOUND")
         raise HTTPException(status_code=404, detail="CSV file not found")
     response = {"csv_id": csv_file.id, "status": csv_file.status}
     if csv_file.status == 'failed' and hasattr(csv_file, 'error') and csv_file.error:
         response["error"] = csv_file.error
+    logger.info(f"Status check for CSV id={csv_id}: {response}")
     return response
 
 @router.get("/csv/{csv_id}")
@@ -367,7 +402,7 @@ def get_csv_file(csv_id: int, db: Session = Depends(get_db), current_user: dict 
     csv_file = db.query(CSVFile).filter(CSVFile.id == csv_id).first()
     if not csv_file:
         raise HTTPException(status_code=404, detail="CSV file not found")
-    if csv_file.status != 'done':
+    if csv_file.status in ["pending", "processing"]:
         raise HTTPException(status_code=400, detail="CSV file is not ready yet. Current status: {}".format(csv_file.status))
     return Response(
         content=csv_file.file_content,
