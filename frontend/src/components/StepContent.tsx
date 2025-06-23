@@ -64,7 +64,7 @@ const StepContent: React.FC<StepContentProps> = ({
 
       message.success({
         content: "CSV file downloaded successfully!",
-        duration: 4,
+        duration: 2,
       });
     } catch (error) {
       if (error.response && error.response.status === 401) {
@@ -102,7 +102,7 @@ const StepContent: React.FC<StepContentProps> = ({
 
       message.success({
         content: "CSV file downloaded successfully!",
-        duration: 4,
+        duration: 2,
       });
     } catch (error) {
       if (error.response && error.response.status === 401) {
@@ -194,7 +194,7 @@ const StepContent: React.FC<StepContentProps> = ({
         if (response) {
           message.success({
             content: "File uploaded successfully!",
-            duration: 4,
+            duration: 2,
           });
           const id = response?.data?.csv_id;
           setId(id);
@@ -244,21 +244,29 @@ const StepContent: React.FC<StepContentProps> = ({
           clearInterval(interval);
           message.success({
             content: "CSV Processed successfully!",
-            duration: 4,
+            duration: 2,
           });
         } else if (status === "failed" || status === "fail") {
           clearInterval(interval);
-          message.error({
-            content: "Something went wrong!",
-            duration: 4,
-          });
+          if (response?.data?.error) {
+            message.error({
+              content: response?.data?.error,
+              duration: 8,
+            });
+          } else {
+            message.error({
+              content: "Something went wrong!",
+              duration: 2,
+            });
+          }
+
           setResult("fail");
         }
       } catch (error) {
         if (error.response && error.response.status === 401) {
           message.error({
             content: "Session expired. Please log in again.",
-            duration: 4,
+            duration: 2,
           });
           logout();
         } else {
