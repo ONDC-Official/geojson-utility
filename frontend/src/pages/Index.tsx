@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { Layout, Steps, Button, Avatar, Dropdown, Space, message } from "antd";
+import {
+  Layout,
+  Steps,
+  Button,
+  Avatar,
+  Dropdown,
+  Space,
+} from "antd";
 import { UserOutlined, LogoutOutlined } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuth } from "../contexts/AuthContext";
@@ -48,6 +55,12 @@ const Index: React.FC = () => {
       icon: <UserOutlined />,
       label: user?.name || "Profile",
     },
+    {
+      key: "logout",
+      icon: <LogoutOutlined />,
+      label: "Logout",
+      onClick: logout,
+    },
   ];
 
   const handleStepClick = (step: number) => {
@@ -79,18 +92,21 @@ const Index: React.FC = () => {
             <LogoImage src={logo} alt="ONDC Logo" />
           </div>
         </LogoContainer>
+
         <div className="flex justify-center gap-4 items-center">
-          <Button
-            type="primary"
-            onClick={handleRegister}
-            style={{
-              background:
-                "linear-gradient(90deg, #1c75bc, #4aa1e0 51%, #1c75bc) var(--x, 100%) / 200%",
-              color: "#fff",
-            }}
-          >
-            Generate Token
-          </Button>
+          {!isAuthenticated && (
+            <Button
+              type="primary"
+              onClick={handleRegister}
+              style={{
+                background:
+                  "linear-gradient(90deg, #1c75bc, #4aa1e0 51%, #1c75bc) var(--x, 100%) / 200%",
+                color: "#fff",
+              }}
+            >
+              Generate Token
+            </Button>
+          )}
 
           {isAuthenticated ? (
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">

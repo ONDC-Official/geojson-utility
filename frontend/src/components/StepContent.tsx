@@ -348,6 +348,78 @@ const StepContent: React.FC<StepContentProps> = ({
                 Download the CSV template to understand the required data
                 format. This template includes sample data and column headers.
               </Paragraph>
+              <Paragraph>
+                <ul className="list-disc pl-6 space-y-2 text-gray-700">
+                  <li>
+                    <strong>SNP ID</strong>
+                    <div className="text-sm text-gray-500">
+                      Path:{" "}
+                      <code className="bg-gray-100 px-1 rounded">
+                        context.bpp_id
+                      </code>{" "}
+                      – Unique ID of the BPP in the message context.
+                    </div>
+                  </li>
+                  <li>
+                    <strong>Provider ID</strong>
+                    <div className="text-sm text-gray-500">
+                      Path:{" "}
+                      <code className="bg-gray-100 px-1 rounded">
+                        message.bpp.providers[index].id
+                      </code>{" "}
+                      – Unique identifier for a provider.
+                    </div>
+                  </li>
+                  <li>
+                    <strong>Location ID</strong>
+                    <div className="text-sm text-gray-500">
+                      Path:{" "}
+                      <code className="bg-gray-100 px-1 rounded">
+                        message.bpp.providers[index].locations[index].id
+                      </code>{" "}
+                      – ID for a specific provider location.
+                    </div>
+                  </li>
+                  <li>
+                    <strong>Location GPS</strong>
+                    <div className="text-sm text-gray-500">
+                      Path:{" "}
+                      <code className="bg-gray-100 px-1 rounded">
+                        message.bpp.providers[index].locations[index].gps
+                      </code>{" "}
+                      – GPS coordinates of the provider's location.
+                    </div>
+                  </li>
+                  <li>
+                    <strong>Drive Distance</strong>
+                    <div className="text-sm text-gray-500">
+                      Value in meters – Drive distance for catchment.
+                    </div>
+                  </li>
+                  <li>
+                    <strong>Drive Time</strong>
+                    <div className="text-sm text-gray-500">
+                      Value in minutes – Drive time for catchment.
+                    </div>
+                  </li>
+                  <li>
+                    <strong>GeoJSON</strong>
+                    <div className="text-sm text-gray-500">
+                      Path:{" "}
+                      <code className="bg-gray-100 px-1 rounded">
+                        message.bpp.providers[index].tags where tag.code ===
+                        "serviceability" and tag.list.type === 13
+                      </code>{" "}
+                      where{" "}
+                      <code className="bg-gray-100 px-1 rounded">
+                        tag.code === "serviceability"
+                      </code>{" "}
+                      – Contains the GeoJSON structure representing the
+                      serviceable area for the provider.
+                    </div>
+                  </li>
+                </ul>
+              </Paragraph>
               <div style={{ textAlign: "center", marginTop: "24px" }}>
                 <Button
                   type="primary"
