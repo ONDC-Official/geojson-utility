@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()  # Load .env before anything else. Do not call load_dotenv() elsewhere.
 
 from fastapi import FastAPI
-from db.session import engine, Base
+from db.session import engine, Base, DATABASE_URL
 from routers import users, catchment
 from models import user, csvfile
 from starlette.middleware.cors import CORSMiddleware
@@ -19,6 +19,8 @@ from slowapi.middleware import SlowAPIMiddleware
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from core.limiter import limiter
+
+print(f"[Startup] DATABASE_URL: {DATABASE_URL}", flush=True)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
