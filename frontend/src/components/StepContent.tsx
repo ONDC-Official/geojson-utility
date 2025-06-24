@@ -260,7 +260,7 @@ const StepContent: React.FC<StepContentProps> = ({
             });
           }
 
-          setResult("fail");
+          setResult("failed");
         }
       } catch (error) {
         if (error.response && error.response.status === 401) {
@@ -274,6 +274,8 @@ const StepContent: React.FC<StepContentProps> = ({
             content: "Facing some issue while fetching file status",
             duration: 4,
           });
+          setResult("fail");
+          clearInterval(interval);
         }
       }
     };
@@ -495,13 +497,15 @@ const StepContent: React.FC<StepContentProps> = ({
                           Generating CSV file
                           <Spin size="small" style={{ margin: "10px" }} />
                         </>
+                      ) : result === "failed" ? (
+                        "Processing failed due to errors in the uploaded CSV file. Please download the updated CSV to review the errors, correct them, and try uploading again. If the issue persists, reach out to support for further assistance."
                       ) : result === "fail" ? (
                         "CSV file generation failed. Please try again later or reach out to support if the problem continues."
                       ) : (
                         "You can now download your CSV file by clicking the Download button."
                       )}
                     </Paragraph>
-                    {result === "done" && (
+                    {result !== "fail" && (
                       <Button
                         type="primary"
                         onClick={onDownloadSCV}
