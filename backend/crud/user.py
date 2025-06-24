@@ -23,4 +23,6 @@ def delete_user_by_username(db: Session, username: str):
     user = get_user_by_username(db, username)
     if user:
         db.delete(user)
-        db.commit() 
+        db.commit()
+        return True
+    return False 

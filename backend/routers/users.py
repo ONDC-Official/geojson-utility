@@ -3,11 +3,12 @@ from sqlalchemy.orm import Session
 from schemas.user import UserCreate, UserRead, UserLogin
 from schemas.token import Token
 from crud.user import get_user_by_username, create_user, authenticate_user, delete_user_by_username
-from core.auth import create_access_token, get_current_user
+from core.auth import create_access_token, get_current_user, blacklist_jwt
 from db.session import get_db
 from core.limiter import limiter
 from fastapi.security import HTTPAuthorizationCredentials
 from typing import Optional
+from models.user_token import UserToken
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -18,9 +19,9 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already registered")
     created_user = create_user(db, user.username, user.password)
     access_token, jti = create_access_token(data={"sub": created_user.username})
-    # Save the token in the User table
-    created_user.token = access_token
-    db.add(created_user)
+    # Save the token in the database
+    db_token = UserToken(username=created_user.username, token=access_token)
+    db.add(db_token)
     db.commit()
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -40,11 +41,14 @@ async def login(request: Request, token: Optional[str] = None):
     user = get_current_user(credentials)
     return {"username": user["username"]}
 
-@router.post("/delete-user")
-def delete_user(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+@router.post("/logout")
+def logout(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
+        jti = current_user['jti']
+        blacklist_jwt(jti, db)
+        # Remove user from database
         username = current_user['username']
         delete_user_by_username(db, username)
-        return {"msg": "User and all info deleted successfully"}
+        return {"msg": "Logged out successfully and user deleted"}
     except Exception:
-        raise HTTPException(status_code=500, detail="Error deleting user") 
+        raise HTTPException(status_code=500, detail="Error blacklisting JWT and deleting user") 

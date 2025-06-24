@@ -1,12 +1,16 @@
 # GeoJSON Backend API
 
-A production-ready FastAPI backend for uploading, processing, and storing CSVs with geospatial data.
+A production-ready FastAPI backend for uploading, processing, and storing CSVs with geospatial data, user authentication, and JWT blacklist management.
 
 ## Features
 
+- User registration, JWT issuance (no expiration)
+- Login using JWT token only
 - Upload and process CSVs with geospatial data (Lepton Maps API)
 - Download processed CSVs (with geojson column)
 - List uploaded CSVs
+- JWT blacklist with automatic cleanup (every 7 days)
+- Admin endpoint for manual blacklist cleanup
 - **Global webhook notification when CSV processing completes**
 
 ## Setup
@@ -19,12 +23,7 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
    ```
 2. **Set environment variables in a `.env` file:**
    ```env
-   DB_USERNAME=your_db_username
-   DB_PASSWORD=your_db_password
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_NAME=your_db_name
-   DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+   DATABASE_URL=postgresql://<user>:<password>@<host>:<port>/<database>
    SECRET_KEY=your_secret_key
    LEPTON_API_KEY=your_leptonmaps_api_key
    WEBHOOK_URL=https://your-frontend-or-webhook-endpoint.com/webhook
@@ -32,13 +31,13 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
    RATE_LIMIT=100/minute
    ENV=development
    ```
-3. **Run migrations:**
+3. **Run Alembic migrations:**
    ```sh
-   alembic -c backend/alembic.ini upgrade head
+   alembic upgrade head
    ```
-4. **Start the backend:**
+4. **Start the server:**
    ```sh
-   uvicorn backend.main:app --reload
+   uvicorn main:app --reload
    ```
 
 ### Docker Compose
@@ -50,6 +49,41 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
 2. **The API will be available at** `http://localhost:8000`
 
 ## API Endpoints
+
+### **POST /auth/register**
+Register a new user and receive a JWT token (no expiration).
+- **Request:** `{ "username": "string", "password": "string" }`
+- **Response:** `{ "access_token": "...", "token_type": "bearer" }`
+- **Authentication:** Not required
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/auth/register \
+    -H 'Content-Type: application/json' \
+    -d '{"username": "testuser1", "password": "testpass"}'
+  ```
+
+### **POST /auth/login**
+Login using a JWT token only. Returns the username if valid.
+- **Request:** `{ "token": "<jwt_token>" }`
+- **Response:** `{ "username": "..." }`
+- **Authentication:** Not required
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"token": "<jwt_token>"}'
+  ```
+
+### **POST /auth/logout**
+Blacklist the current JWT token and delete the user.
+- **Request:** Bearer token in Authorization header
+- **Response:** `{ "msg": "Logged out successfully and user deleted" }`
+- **Authentication:** Required
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/auth/logout \
+    -H 'Authorization: Bearer <jwt_token>'
+  ```
 
 ### **GET /catchment/sample-csv**
 Download a sample CSV template for bulk upload.
@@ -85,6 +119,7 @@ Upload a CSV for bulk processing. Each row is validated and processed asynchrono
     - String with two comma-separated floats (latitude,longitude)
     - Each float must have at least 4 decimal places
     - Latitude must be between -90 and 90, longitude between -180 and 180
+    - No extra whitespace
   - **drive_distance, drive_time:**
     - At least one must be provided and non-empty per row
     - Must be positive integers if present (accepts both `500` and `500.0`)
@@ -103,7 +138,7 @@ Upload a CSV for bulk processing. Each row is validated and processed asynchrono
     {
       "csv_id": 1,
       "status": "failed",
-      "error": "Row 2: drive_distance must be a positive integer.\nRow 3: location_gps must be a string with two comma-separated floats, each with at least 4 decimals, valid range."
+      "error": "Row 2: drive_distance must be a positive integer.\nRow 3: location_gps must be a string with two comma-separated floats, each with at least 4 decimals, valid range, and no extra whitespace."
     }
     ```
 
@@ -137,6 +172,15 @@ List all uploaded/processed CSVs for the current user.
     -H 'Authorization: Bearer <jwt_token>'
   ```
 
+### **POST /admin/cleanup-blacklist**
+Manually trigger cleanup of expired JWT blacklist entries (older than 7 days).
+- **Response:** `{ "deleted": <number_of_entries_deleted> }`
+- **Authentication:** Not required (but should be protected in production)
+- **Curl:**
+  ```sh
+  curl -X POST http://localhost:8000/admin/cleanup-blacklist
+  ```
+
 ## Webhook Notification on CSV Processing
 
 When a CSV is processed and status is set to `done`, the backend will automatically send a POST request to the global webhook URL specified in your `.env` as `WEBHOOK_URL`.
@@ -154,6 +198,10 @@ When a CSV is processed and status is set to `done`, the backend will automatica
   2. Upload a CSV and wait for processing to complete.
   3. Check your test endpoint for the POST request.
 
-## Usage
+## Notes
 
-- Upload CSVs, check status, and download processed files via the documented endpoints.
+- All endpoints requiring authentication need the `Authorization: Bearer <access_token>` header.
+- The JWT blacklist is cleaned up automatically on server startup and can be triggered manually via the admin endpoint.
+- Use Alembic for all future database schema changes.
+- The backend is robust to whitespace, empty, and float values in integer fields in CSV uploads.
+- For deployment, see the provided `Dockerfile` and `docker-compose.yml` for production-ready setup.
