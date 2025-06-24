@@ -8,7 +8,6 @@ from db.session import get_db
 from core.limiter import limiter
 from fastapi.security import HTTPAuthorizationCredentials
 from typing import Optional
-from models.user_token import UserToken
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -19,9 +18,9 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already registered")
     created_user = create_user(db, user.username, user.password)
     access_token, jti = create_access_token(data={"sub": created_user.username})
-    # Save the token in the database
-    db_token = UserToken(username=created_user.username, token=access_token)
-    db.add(db_token)
+    # Save the token in the User table
+    created_user.token = access_token
+    db.add(created_user)
     db.commit()
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -41,12 +40,11 @@ async def login(request: Request, token: Optional[str] = None):
     user = get_current_user(credentials)
     return {"username": user["username"]}
 
-@router.post("/logout")
-def logout(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+@router.post("/delete-user")
+def delete_user(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        # Only delete user from database
         username = current_user['username']
         delete_user_by_username(db, username)
-        return {"msg": "Logged out successfully and user deleted"}
+        return {"msg": "User and all info deleted successfully"}
     except Exception:
         raise HTTPException(status_code=500, detail="Error deleting user") 
