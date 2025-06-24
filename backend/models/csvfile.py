@@ -10,6 +10,4 @@ class CSVFile(Base):
     user_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=func.now())
     status = Column(String, default='pending', nullable=False)
-    drive_distance = Column(Integer, nullable=True)
-    drive_time = Column(Integer, nullable=True)
     error = Column(String, nullable=True) 

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from schemas.user import UserCreate, UserRead, UserLogin
 from schemas.token import Token
 from crud.user import get_user_by_username, create_user, authenticate_user, delete_user_by_username
-from core.auth import create_access_token, get_current_user, blacklist_jwt
+from core.auth import create_access_token, get_current_user
 from db.session import get_db
 from core.limiter import limiter
 from fastapi.security import HTTPAuthorizationCredentials
@@ -44,11 +44,9 @@ async def login(request: Request, token: Optional[str] = None):
 @router.post("/logout")
 def logout(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        jti = current_user['jti']
-        blacklist_jwt(jti, db)
-        # Remove user from database
+        # Only delete user from database
         username = current_user['username']
         delete_user_by_username(db, username)
         return {"msg": "Logged out successfully and user deleted"}
     except Exception:
-        raise HTTPException(status_code=500, detail="Error blacklisting JWT and deleting user") 
+        raise HTTPException(status_code=500, detail="Error deleting user") 

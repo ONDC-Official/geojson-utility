@@ -76,3 +76,5 @@ dist-ssr
 .env.production
 
 **/ .env
+
+**/alembic

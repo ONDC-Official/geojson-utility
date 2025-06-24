@@ -19,7 +19,12 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
    ```
 2. **Set environment variables in a `.env` file:**
    ```env
-   DATABASE_URL=postgresql://<user>:<password>@<host>:<port>/<database>
+   DB_USERNAME=your_db_username
+   DB_PASSWORD=your_db_password
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_NAME=your_db_name
+   DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
    SECRET_KEY=your_secret_key
    LEPTON_API_KEY=your_leptonmaps_api_key
    WEBHOOK_URL=https://your-frontend-or-webhook-endpoint.com/webhook
@@ -27,13 +32,13 @@ A production-ready FastAPI backend for uploading, processing, and storing CSVs w
    RATE_LIMIT=100/minute
    ENV=development
    ```
-3. **Run Alembic migrations:**
+3. **Run migrations:**
    ```sh
-   alembic upgrade head
+   alembic -c backend/alembic.ini upgrade head
    ```
-4. **Start the server:**
+4. **Start the backend:**
    ```sh
-   uvicorn main:app --reload
+   uvicorn backend.main:app --reload
    ```
 
 ### Docker Compose
@@ -148,3 +153,7 @@ When a CSV is processed and status is set to `done`, the backend will automatica
   1. Set `WEBHOOK_URL` in your `.env` to a test endpoint (e.g., from https://webhook.site/).
   2. Upload a CSV and wait for processing to complete.
   3. Check your test endpoint for the POST request.
+
+## Usage
+
+- Upload CSVs, check status, and download processed files via the documented endpoints.

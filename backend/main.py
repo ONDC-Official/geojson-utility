@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from db.session import engine, Base
 from routers import users, catchment
 from models import user, csvfile
-from core.auth import admin_router, cleanup_expired_blacklist_entries
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware import Middleware
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -76,7 +75,6 @@ def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 # Include routers
 app.include_router(users.router)
 app.include_router(catchment.router)
-app.include_router(admin_router)
 
 @app.get("/health")
 def health_check():
@@ -85,12 +83,6 @@ def health_check():
 @app.get("/")
 def root():
     return {"message": "Welcome to the GeoJSON backend API"}
-
-@app.on_event("startup")
-def run_blacklist_cleanup():
-    # Log the DATABASE_URL at startup
-    print(f"[Startup] DATABASE_URL: {os.environ.get('DATABASE_URL')}")
-    cleanup_expired_blacklist_entries()
 
 if __name__ == "__main__":
     import uvicorn
