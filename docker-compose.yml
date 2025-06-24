@@ -5,9 +5,9 @@ services:
     image: postgres:15
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: mydb
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "5432:5432"
     volumes:
@@ -17,6 +17,7 @@ services:
 
   backend:
     build: ./backend
+    restart: always
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
@@ -34,17 +35,18 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE_URL: https://geojson-utility.ondc.tech/
+        VITE_API_BASE_URL: http://localhost:8000
+    restart: always
     ports:
       - "7000:80"
     depends_on:
       - backend
     networks:
       - app-network
-  
 
 volumes:
   postgres_data:
+
 networks:
   app-network:
     driver: bridge
