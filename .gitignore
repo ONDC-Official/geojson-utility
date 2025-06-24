@@ -24,4 +24,13 @@ dist-ssr
 *.sw?
 
 # .gitignore
+
 .env*
+
+.env
+.env.production
+
+**/ .env
+
+**/alembic
+
