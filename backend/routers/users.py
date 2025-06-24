@@ -8,6 +8,7 @@ from db.session import get_db
 from core.limiter import limiter
 from fastapi.security import HTTPAuthorizationCredentials
 from typing import Optional
+from models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -26,7 +27,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login")
 @limiter.limit("5/minute")
-async def login(request: Request, token: Optional[str] = None):
+async def login(request: Request, db: Session = Depends(get_db), token: Optional[str] = None):
     # Accept JWT token in the request body as {"token": "..."}
     if not token:
         try:
@@ -36,9 +37,11 @@ async def login(request: Request, token: Optional[str] = None):
             raise HTTPException(status_code=400, detail="Token required in request body.")
     if not token:
         raise HTTPException(status_code=400, detail="Token required in request body.")
-    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    user = get_current_user(credentials)
-    return {"username": user["username"]}
+    # Check if the token exists in the User table
+    user = db.query(User).filter(User.token == token).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return {"username": user.username}
 
 @router.post("/delete-user")
 def delete_user(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):

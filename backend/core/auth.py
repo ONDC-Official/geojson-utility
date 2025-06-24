@@ -7,6 +7,7 @@ import uuid
 import os
 from dotenv import load_dotenv
 from typing import Optional
+from models.user import User
 
 load_dotenv()
 
@@ -28,6 +29,10 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Check if the token exists in the User table
+        user = db.query(User).filter(User.token == token).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Token not found or user deleted")
         username = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
