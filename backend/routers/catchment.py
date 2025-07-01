@@ -93,7 +93,6 @@ class LeptonMapsClient:
         if not coords or not isinstance(coords, list):
             raise ValueError("Invalid or missing coordinates in geometry")
         outer_ring = coords[0]
-        polygon_coordinates = [(lat, lon) for lon, lat in outer_ring]
         geojson_polygon = {
             "type": "FeatureCollection",
             "features": [
@@ -101,7 +100,7 @@ class LeptonMapsClient:
                     "type": "Feature",
                     "geometry": {
                         "type": "Polygon",
-                        "coordinates": [polygon_coordinates]
+                        "coordinates": [outer_ring]
                     },
                     "properties": {}
                 }
