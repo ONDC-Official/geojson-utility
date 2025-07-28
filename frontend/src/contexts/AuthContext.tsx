@@ -24,14 +24,15 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const savedToken = localStorage.getItem("jwt_token");
-  const savedUser = localStorage.getItem("user_data");
+  
   useEffect(() => {
+    const savedToken = localStorage.getItem("jwt_token");
+    const savedUser = localStorage.getItem("user_data");
     if (savedToken) {
       setToken(savedToken);
       setUser({ name: savedUser });
     }
-  }, [savedToken]);
+  }, []);
 
   const login = (token: string, user: string) => {
     setToken(token);
