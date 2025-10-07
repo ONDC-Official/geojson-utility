@@ -16,6 +16,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.limiter import limiter
+from core.lepton_usage import LeptonTokenService
 import threading
 import httpx
 import re
@@ -166,7 +167,14 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
         dups = df[df['location_id'].duplicated(keep=False)]['location_id'].tolist()
         raise HTTPException(status_code=400, detail=f"CSV file contains duplicate location_id values: {set(dups)}")
     username = current_user.get('username')
-    user_id = current_user.get('user_id') if 'user_id' in current_user else None
+    user_id = current_user.get('user_id')
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID not found in authentication")
+    
+    # Get user's token status
+    user_token_status = LeptonTokenService.get_token_status(user_id, db)
+    csv_row_count = len(df)
+    
     new_csv = CSVFile(filename=file.filename, file_content=content, username=username, user_id=user_id, status='pending')
     db.add(new_csv)
     db.commit()
@@ -303,23 +311,44 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                             row_errors.append("drive_time is unreasonably large.")
                 geojson_str = '{}'
                 if not row_errors and 'lat' in locals() and 'lon' in locals():
-                    try:
-                        client = LeptonMapsClient(api_key=api_key)
-                        if use_drive_distance and drive_distance_val is not None:
-                            geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_DISTANCE', drive_distance=drive_distance_val)
-                        elif drive_time_val is not None:
-                            geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_TIME', drive_time=drive_time_val)
-                        else:
-                            row_errors.append("Either drive_distance or drive_time must be provided and valid.")
-                            return idx, geojson_str, row_errors
-                        polygon_geojson = client.extract_polygon_geojson(geojson)
-                        geojson_str = json.dumps(polygon_geojson)
-                    except Exception as e:
-                        logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
-                        if isinstance(e, HTTPException) and 'Lepton Maps API' in str(e.detail):
-                            row_errors.append("Lepton Maps API error: The provided coordinates are not supported or not found.")
-                        else:
-                            row_errors.append(f"GeoJSON error: {str(e)}")
+                    # Step 1: Check if user has tokens available (non-consuming check)
+                    if not LeptonTokenService.check_user_has_tokens(user_id, session):
+                        row_errors.append("Your token allocation has been exhausted")
+                    else:
+                        try:
+                            # Step 2: Make Lepton API call
+                            client = LeptonMapsClient(api_key=api_key)
+                            if use_drive_distance and drive_distance_val is not None:
+                                geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_DISTANCE', drive_distance=drive_distance_val)
+                            elif drive_time_val is not None:
+                                geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_TIME', drive_time=drive_time_val)
+                            else:
+                                row_errors.append("Either drive_distance or drive_time must be provided and valid.")
+                                return idx, geojson_str, row_errors
+                                
+                            # Step 3: API call succeeded - now consume token
+                            if LeptonTokenService.consume_token_after_success(user_id, session):
+                                polygon_geojson = client.extract_polygon_geojson(geojson)
+                                geojson_str = json.dumps(polygon_geojson)
+                            else:
+                                # Race condition: tokens exhausted between check and consumption
+                                row_errors.append("Your token allocation has been exhausted")
+                                
+                        except Exception as e:
+                            # Step 4: API call failed - don't consume token
+                            logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
+                            
+                            # Distinguish between different error types
+                            error_str = str(e)
+                            if "HTTP 402" in error_str or "Not enough credits" in error_str:
+                                # Real Lepton API exhaustion
+                                row_errors.append("Lepton Maps API: Not enough credits (HTTP 402). Please check your API quota or upgrade your plan.")
+                            elif "HTTP 401" in error_str:
+                                row_errors.append("Lepton Maps API: Unauthorized (HTTP 401). Your API key is invalid or expired.")
+                            elif "HTTP 403" in error_str:
+                                row_errors.append("Lepton Maps API: Forbidden (HTTP 403). Your API key does not have access.")
+                            else:
+                                row_errors.append(f"GeoJSON error: {str(e)}")
                 return idx, geojson_str, row_errors
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = [executor.submit(process_row, idx, row) for idx, row in df.iterrows()]
@@ -335,8 +364,19 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             processed_content = output.getvalue().encode('utf-8')
             csv_file.file_content = processed_content
 
-            if any(errors_per_row):  # If any row has errors
+            # Determine CSV status based on error types
+            has_token_exhaustion = any("Your token allocation has been exhausted" in error for error in errors_per_row if error)
+            has_lepton_api_credits = any("Lepton Maps API: Not enough credits" in error for error in errors_per_row if error)
+            has_other_errors = any(error and "Your token allocation has been exhausted" not in error and "Lepton Maps API: Not enough credits" not in error for error in errors_per_row)
+            
+            if has_token_exhaustion and not has_other_errors and not has_lepton_api_credits:
+                csv_file.status = 'partial'
+                csv_file.error = 'Token allocation exhausted during processing'
+            elif has_lepton_api_credits:
                 csv_file.status = 'failed'
+                csv_file.error = 'Lepton API credits exhausted'
+            elif any(errors_per_row):
+                csv_file.status = 'failed' 
                 csv_file.error = 'Some rows failed, see errors column'
             else:
                 csv_file.status = 'done'
@@ -382,7 +422,16 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
         finally:
             session.close()
     threading.Thread(target=process_csv_in_background, args=(csv_id, content, username, user_id), daemon=True).start()
-    return {"csv_id": csv_id, "status": "pending"}
+    
+    return {
+        "csv_id": csv_id, 
+        "status": "pending",
+        "token_info": {
+            "available": user_token_status["remaining"],
+            "total_rows": csv_row_count,
+            "estimated_processed": min(user_token_status["remaining"], csv_row_count)
+        }
+    }
 
 @router.get("/csv-status/{csv_id}")
 def get_csv_status(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

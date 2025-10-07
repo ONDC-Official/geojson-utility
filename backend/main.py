@@ -20,8 +20,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from core.limiter import limiter
 
-print(f"[Startup] DATABASE_URL: {DATABASE_URL}", flush=True)
-
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)

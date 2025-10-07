@@ -36,7 +36,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         username = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
-        return {"username": username, "jti": payload.get("jti")}
+        return {"username": username, "user_id": user.id, "jti": payload.get("jti")}
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
