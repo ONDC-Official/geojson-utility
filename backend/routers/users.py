@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from sqlalchemy.orm import Session
-from schemas.user import UserCreate, UserRead, UserLogin
+from schemas.user import UserCreate, UserRead
 from schemas.token import Token
-from crud.user import get_user_by_username, create_user, authenticate_user, delete_user_by_username
+from crud.user import get_user_by_username, create_user, delete_user_by_username
 from core.auth import create_access_token, get_current_user
 from db.session import get_db
 from core.limiter import limiter
@@ -52,14 +52,13 @@ async def register(
 
 @router.post("/login")
 @limiter.limit("5/minute")
-async def login(request: Request, db: Session = Depends(get_db), token: Optional[str] = None):
+async def login(request: Request, db: Session = Depends(get_db)):
     # Accept JWT token in the request body as {"token": "..."}
-    if not token:
-        try:
-            body = await request.json()
-            token = body.get("token")
-        except Exception:
-            raise HTTPException(status_code=400, detail="Token required in request body.")
+    try:
+        body = await request.json()
+        token = body.get("token")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Token required in request body.")
     if not token:
         raise HTTPException(status_code=400, detail="Token required in request body.")
     # Check if the token exists in the User table

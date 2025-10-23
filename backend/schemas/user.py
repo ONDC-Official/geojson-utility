@@ -9,6 +9,7 @@ class UserRead(BaseModel):
     username: str
     class Config:
         from_attributes = True
-class UserLogin(BaseModel):
-    username: str
-    password: str 
+# UNUSED - UserLogin class is imported but never used in the codebase
+# class UserLogin(BaseModel):
+#     username: str
+#     password: str 
