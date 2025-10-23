@@ -33,3 +33,4 @@ dist-ssr
 backend/GeoJSON Token Management - Complete User Journey.postman_collection.json
 backend/TOKEN_CONFIGURATION.md
 .DS_Store
+.env-prod
