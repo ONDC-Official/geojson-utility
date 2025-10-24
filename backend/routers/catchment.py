@@ -4,6 +4,8 @@ from core.auth import get_current_user
 from db.session import get_db, Base, engine
 from fastapi.responses import StreamingResponse, JSONResponse
 from models.csvfile import CSVFile
+from core.sse_manager import sse_manager
+from core.validation_helpers import validate_csv_row
 import pandas as pd
 import io
 import os
@@ -12,13 +14,13 @@ import http.client
 from urllib.parse import urlencode
 import logging
 from typing import Optional
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.limiter import limiter
 from core.lepton_usage import LeptonTokenService
 import threading
-import httpx
 import re
 
 load_dotenv()
@@ -189,6 +191,10 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
             csv_file.status = 'processing'
             session.commit()
             df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+            total_rows = len(df)
+            
+            # Broadcast processing start event
+            sse_manager.broadcast_start(csv_id, total_rows)
             errors_per_row = [''] * len(df)
             geojson_results = [None] * len(df)
             required_columns = {'snp_id', 'provider_id', 'location_id', 'location_gps', 'drive_distance', 'drive_time'}
@@ -203,6 +209,9 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                 csv_file.status = 'failed'
                 csv_file.error = f"Missing columns: {', '.join(missing_columns)}"
                 session.commit()
+                
+                # Broadcast failure event via SSE (separate from CSV logic)
+                sse_manager.broadcast_complete(csv_id, csv_file.status, csv_file.error)
                 return
             api_key = os.environ.get("LEPTON_API_KEY")
             if not api_key:
@@ -215,102 +224,16 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                 csv_file.status = 'failed'
                 csv_file.error = "LEPTON_API_KEY not set"
                 session.commit()
+                
+                # Broadcast failure event via SSE (separate from CSV logic)
+                sse_manager.broadcast_complete(csv_id, csv_file.status, csv_file.error)
                 return
-            def validate_location_gps(value):
-                if not isinstance(value, str):
-                    return False
-                value = value.strip()
-                parts = value.split(',')
-                if len(parts) != 2:
-                    return False
-                # Accept and ignore extra whitespace around lat/lon
-                lat_str = parts[0].strip()
-                lon_str = parts[1].strip()
-                try:
-                    lat = float(lat_str)
-                    lon = float(lon_str)
-                except Exception:
-                    return False
-                # Check for at least 4 decimals
-                lat_dec = lat_str.split('.')[-1] if '.' in lat_str else ''
-                lon_dec = lon_str.split('.')[-1] if '.' in lon_str else ''
-                if len(lat_dec) < 4 or len(lon_dec) < 4:
-                    return False
-                # Check range
-                if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-                    return False
-                return True
-            def validate_id_field(field, value):
-                if not value:
-                    return f"{field} must be a non-empty string."
-                if len(value) > 255:
-                    return f"{field} must be at most 255 characters."
-                if not re.match(r'^[\w\.\-@]+$', value):
-                    return f"{field} contains invalid characters."
-                if value.strip() != value:
-                    return f"{field} must not have leading/trailing whitespace."
-                return None
-            def parse_int(val):
-                try:
-                    return int(str(val).strip())
-                except ValueError:
-                    try:
-                        return int(float(str(val).strip()))
-                    except Exception:
-                        return None
-            def is_present(val):
-                return val is not None and not pd.isnull(val) and str(val).strip() != ''
             def process_row(idx, row):
-                row_errors = []
-                snp_id = str(row['snp_id']).strip()
-                provider_id = str(row['provider_id']).strip()
-                location_id = str(row['location_id']).strip()
-                location_gps = str(row['location_gps']).strip()
-                drive_distance = row.get('drive_distance')
-                drive_time = row.get('drive_time')
-                # Validate id fields
-                for field, value in [('snp_id', snp_id), ('provider_id', provider_id), ('location_id', location_id)]:
-                    err = validate_id_field(field, value)
-                    if err:
-                        row_errors.append(err)
-                # Validate location_gps
-                if not validate_location_gps(location_gps):
-                    row_errors.append("location_gps must be a string with two comma-separated floats, each with at least 4 decimals, valid range.")
-                else:
-                    lat_str, lon_str = [x.strip() for x in location_gps.split(',')]
-                    lat, lon = float(lat_str), float(lon_str)
-                    lat_str = f"{lat:.4f}"
-                    lon_str = f"{lon:.4f}"
-                    if not (-90 <= lat <= 90):
-                        row_errors.append("latitude in location_gps must be between -90 and 90.")
-                    if not (-180 <= lon <= 180):
-                        row_errors.append("longitude in location_gps must be between -180 and 180.")
-                use_drive_distance = False
-                drive_distance_val = None
-                drive_time_val = None
-                if not is_present(drive_distance) and not is_present(drive_time):
-                    row_errors.append("Either drive_distance or drive_time must be provided and non-empty.")
-                else:
-                    if is_present(drive_distance):
-                        drive_distance_val = parse_int(drive_distance)
-                        if drive_distance_val is None:
-                            row_errors.append("drive_distance must be an integer if present.")
-                        elif drive_distance_val <= 0:
-                            row_errors.append("drive_distance must be a positive integer.")
-                        elif drive_distance_val > 100000:
-                            row_errors.append("drive_distance is unreasonably large.")
-                        else:
-                            use_drive_distance = True
-                    if not use_drive_distance and is_present(drive_time):
-                        drive_time_val = parse_int(drive_time)
-                        if drive_time_val is None:
-                            row_errors.append("drive_time must be an integer if present.")
-                        elif drive_time_val <= 0:
-                            row_errors.append("drive_time must be a positive integer.")
-                        elif drive_time_val > 10000:
-                            row_errors.append("drive_time is unreasonably large.")
+                # Use helper function for validation
+                row_errors, use_drive_distance, drive_distance_val, drive_time_val, lat, lon = validate_csv_row(row)
+                
                 geojson_str = '{}'
-                if not row_errors and 'lat' in locals() and 'lon' in locals():
+                if not row_errors and lat is not None and lon is not None:
                     # Step 1: Check if user has tokens available (non-consuming check)
                     if not LeptonTokenService.check_user_has_tokens(user_id, session):
                         row_errors.append("Your token allocation has been exhausted")
@@ -319,9 +242,9 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                             # Step 2: Make Lepton API call
                             client = LeptonMapsClient(api_key=api_key)
                             if use_drive_distance and drive_distance_val is not None:
-                                geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_DISTANCE', drive_distance=drive_distance_val)
+                                geojson = client.get_catchment_geojson(latitude=lat, longitude=lon, catchment_type='DRIVE_DISTANCE', drive_distance=drive_distance_val)
                             elif drive_time_val is not None:
-                                geojson = client.get_catchment_geojson(latitude=lat_str, longitude=lon_str, catchment_type='DRIVE_TIME', drive_time=drive_time_val)
+                                geojson = client.get_catchment_geojson(latitude=lat, longitude=lon, catchment_type='DRIVE_TIME', drive_time=drive_time_val)
                             else:
                                 row_errors.append("Either drive_distance or drive_time must be provided and valid.")
                                 return idx, geojson_str, row_errors
@@ -350,12 +273,32 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                             else:
                                 row_errors.append(f"GeoJSON error: {str(e)}")
                 return idx, geojson_str, row_errors
+            # Progress tracking variables
+            completed_count = 0
+            failed_count = 0
+            progress_lock = threading.Lock()
+            
+            def update_progress():
+                nonlocal completed_count, failed_count
+                with progress_lock:
+                    completed_count += 1
+                    # Broadcast progress every 10 rows or significant percentage change
+                    if completed_count % max(1, total_rows // 20) == 0 or completed_count == total_rows:
+                        sse_manager.broadcast_progress(csv_id, completed_count, total_rows, failed_count)
+            
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = [executor.submit(process_row, idx, row) for idx, row in df.iterrows()]
                 for future in as_completed(futures):
                     idx, geojson_str, row_errors = future.result()
                     geojson_results[idx] = geojson_str
                     errors_per_row[idx] = '; '.join(row_errors)
+                    
+                    # Track failed rows
+                    if row_errors:
+                        failed_count += 1
+                    
+                    # Update progress
+                    update_progress()
             df['geojson'] = geojson_results
             df['errors'] = errors_per_row
             output = io.StringIO()
@@ -382,22 +325,9 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                 csv_file.status = 'done'
                 csv_file.error = None
             session.commit()
-            webhook_url = os.getenv("WEBHOOK_URL")
-            if webhook_url:
-                try:
-                    download_url = f"http://localhost:8000/catchment/csv/{csv_id}"
-                    payload = {
-                        "csv_id": csv_id,
-                        "status": csv_file.status,
-                        "download_url": download_url
-                    }
-                    response = httpx.post(webhook_url, json=payload, timeout=5)
-                    response.raise_for_status()
-                    logger.info(f"Webhook sent to {webhook_url}")
-                except Exception as e:
-                    logger.error(f"Failed to send webhook: {e}")
-            else:
-                logger.info("No WEBHOOK_URL set, skipping webhook.")
+            
+            # Broadcast completion event via SSE
+            sse_manager.broadcast_complete(csv_id, csv_file.status, csv_file.error)
         except Exception as e:
             logger.error(f"Error processing file: {str(e)}")
             csv_file = session.query(CSVFile).filter(CSVFile.id == csv_id).first()
@@ -419,6 +349,9 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                 except Exception as inner:
                     logger.error(f"Failed to save partial CSV on error: {inner}")
                 session.commit()
+                
+                # Broadcast failure event via SSE (separate from CSV logic)
+                sse_manager.broadcast_complete(csv_id, csv_file.status, csv_file.error)
         finally:
             session.close()
     threading.Thread(target=process_csv_in_background, args=(csv_id, content, username, user_id), daemon=True).start()
@@ -444,6 +377,90 @@ def get_csv_status(csv_id: int, db: Session = Depends(get_db), current_user: dic
         response["error"] = csv_file.error
     logger.info(f"Status check for CSV id={csv_id}: {response}")
     return response
+
+@router.get("/csv-status-stream/{csv_id}")
+async def stream_csv_status(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Stream real-time CSV processing status via Server-Sent Events"""
+    # Verify CSV exists and user has access
+    csv_file = db.query(CSVFile).filter(CSVFile.id == csv_id).first()
+    if not csv_file:
+        raise HTTPException(status_code=404, detail="CSV file not found")
+    
+    if csv_file.user_id != current_user.get('user_id'):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Subscribe to events for this CSV
+    event_queue = await sse_manager.subscribe(csv_id)
+    
+    async def event_stream():
+        try:
+            # Send initial status
+            initial_data = {
+                "type": "init",
+                "csv_id": csv_id,
+                "status": csv_file.status,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+            if csv_file.error:
+                initial_data["error"] = csv_file.error
+            
+            yield f"data: {json.dumps(initial_data)}\n\n"
+            
+            # If already completed, close connection
+            if csv_file.status in ['done', 'failed', 'partial']:
+                return
+            
+            # Send heartbeat every 30 seconds and listen for events
+            heartbeat_task = None
+            try:
+                heartbeat_task = asyncio.create_task(send_periodic_heartbeat(csv_id))
+                
+                while True:
+                    try:
+                        # Wait for event with timeout for heartbeat
+                        event_data = await asyncio.wait_for(event_queue.get(), timeout=30.0)
+                        yield event_data
+                        
+                        # Check if processing is complete
+                        if '"type": "complete"' in event_data:
+                            break
+                            
+                    except asyncio.TimeoutError:
+                        # Send heartbeat on timeout
+                        heartbeat_data = {
+                            "type": "heartbeat",
+                            "csv_id": csv_id,
+                            "timestamp": datetime.utcnow().isoformat() + "Z"
+                        }
+                        yield f"data: {json.dumps(heartbeat_data)}\n\n"
+                        
+            finally:
+                if heartbeat_task:
+                    heartbeat_task.cancel()
+                    
+        except asyncio.CancelledError:
+            logger.info(f"SSE connection cancelled for CSV {csv_id}")
+        except Exception as e:
+            logger.error(f"Error in SSE stream for CSV {csv_id}: {e}")
+        finally:
+            # Cleanup subscription
+            await sse_manager.unsubscribe(csv_id, event_queue)
+    
+    async def send_periodic_heartbeat(csv_id: int):
+        """Send heartbeat every 30 seconds to keep connection alive"""
+        while True:
+            await asyncio.sleep(30)
+            await sse_manager.send_heartbeat(csv_id)
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 @router.get("/csv/{csv_id}")
 def get_csv_file(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
