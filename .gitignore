@@ -36,3 +36,4 @@ backend/TOKEN_CONFIGURATION.md
 .env-prod
 SQL_TUTORIAL.md
 sample_bulk.csv
+SSE_ARCHITECTURE.md

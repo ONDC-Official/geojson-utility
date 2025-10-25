@@ -4,16 +4,145 @@ import logging
 from typing import Dict, Set, Optional, Any
 from datetime import datetime
 import weakref
+import threading
+import select
+import psycopg2
+import psycopg2.extensions
+import os
 
 logger = logging.getLogger(__name__)
 
 
 class SSEEventManager:
-    """Manages Server-Sent Events for CSV processing status updates"""
+    """Manages Server-Sent Events for CSV processing status updates with PostgreSQL LISTEN/NOTIFY"""
     
     def __init__(self):
         self._subscribers: Dict[int, Set[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()
+        self._pg_connection = None
+        self._pg_listener_thread = None
+        self._loop = None
+        self._shutdown_event = threading.Event()
+        self._start_postgresql_listener()
+    
+    def _start_postgresql_listener(self):
+        """Start PostgreSQL LISTEN connection in background thread"""
+        try:
+            # Get database URL from environment
+            database_url = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/mydb')
+            print(f"DEBUG: SSE Manager starting PostgreSQL listener with URL: {database_url}")
+            logger.info(f"SSE Manager starting PostgreSQL listener with URL: {database_url}")
+            
+            def postgresql_listener():
+                """Background thread that listens for PostgreSQL notifications"""
+                try:
+                    # Connect to PostgreSQL
+                    print(f"DEBUG: Connecting to PostgreSQL: {database_url}")
+                    conn = psycopg2.connect(database_url)
+                    conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+                    cursor = conn.cursor()
+                    
+                    # Start listening to csv_status_change channel
+                    cursor.execute("LISTEN csv_status_change;")
+                    print("DEBUG: PostgreSQL LISTEN connection established for csv_status_change")
+                    logger.info("PostgreSQL LISTEN connection established for csv_status_change")
+                    
+                    self._pg_connection = conn
+                    
+                    # Listen for notifications
+                    while not self._shutdown_event.is_set():
+                        if select.select([conn], [], [], 1) == ([], [], []):
+                            continue  # Timeout, check shutdown event
+                        
+                        conn.poll()
+                        while conn.notifies:
+                            notify = conn.notifies.pop(0)
+                            try:
+                                # Handle the notification asynchronously
+                                self._handle_pg_notification(notify.payload)
+                            except Exception as e:
+                                logger.error(f"Error handling PostgreSQL notification: {e}")
+                                
+                except Exception as e:
+                    logger.error(f"PostgreSQL listener error: {e}")
+                finally:
+                    if self._pg_connection:
+                        try:
+                            self._pg_connection.close()
+                        except:
+                            pass
+                    logger.info("PostgreSQL listener thread stopped")
+            
+            # Start the listener thread
+            self._pg_listener_thread = threading.Thread(target=postgresql_listener, daemon=True)
+            self._pg_listener_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Failed to start PostgreSQL listener: {e}")
+    
+    def _handle_pg_notification(self, payload: str):
+        """Handle PostgreSQL notification and route to appropriate subscribers"""
+        try:
+            # Parse the notification payload
+            data = json.loads(payload)
+            csv_id = data.get('csv_id')
+            
+            if csv_id and csv_id in self._subscribers:
+                # Format as SSE message
+                event_data = {
+                    "type": data.get('event_type', 'update'),
+                    "csv_id": csv_id,
+                    "status": data.get('status'),
+                    "timestamp": datetime.utcnow().isoformat() + "Z"
+                }
+                
+                # Add optional fields
+                if data.get('error'):
+                    event_data["error"] = data.get('error')
+                if data.get('successful_rows') is not None:
+                    event_data["successful_rows"] = data.get('successful_rows')
+                if data.get('failed_rows') is not None:
+                    event_data["failed_rows"] = data.get('failed_rows')
+                if data.get('total_rows') is not None:
+                    event_data["total_rows"] = data.get('total_rows')
+                
+                message = f"data: {json.dumps(event_data)}\n\n"
+                
+                # Send to all subscribers for this CSV (thread-safe)
+                subscribers_copy = self._subscribers.get(csv_id, set()).copy()
+                dead_queues = []
+                
+                for queue in subscribers_copy:
+                    try:
+                        # Use put_nowait to avoid blocking the listener thread
+                        queue.put_nowait(message)
+                    except asyncio.QueueFull:
+                        logger.warning(f"Queue full for CSV {csv_id}, dropping event")
+                        dead_queues.append(queue)
+                    except Exception as e:
+                        logger.error(f"Error sending event to subscriber: {e}")
+                        dead_queues.append(queue)
+                
+                # Clean up dead queues (will be handled by main thread)
+                if dead_queues:
+                    asyncio.create_task(self._cleanup_dead_queues(csv_id, dead_queues))
+                
+                logger.info(f"PostgreSQL notification sent to {len(subscribers_copy) - len(dead_queues)} subscribers for CSV {csv_id}")
+                
+        except Exception as e:
+            logger.error(f"Error handling PostgreSQL notification: {e}")
+    
+    async def _cleanup_dead_queues(self, csv_id: int, dead_queues: list):
+        """Clean up dead queues asynchronously"""
+        try:
+            async with self._lock:
+                if csv_id in self._subscribers:
+                    for queue in dead_queues:
+                        self._subscribers[csv_id].discard(queue)
+                    if not self._subscribers[csv_id]:
+                        del self._subscribers[csv_id]
+        except Exception as e:
+            logger.error(f"Error cleaning up dead queues: {e}")
     
     async def subscribe(self, csv_id: int) -> asyncio.Queue:
         """Subscribe to events for a specific CSV ID"""
@@ -131,6 +260,20 @@ class SSEEventManager:
     def get_subscriber_count(self, csv_id: int) -> int:
         """Get number of subscribers for a CSV ID"""
         return len(self._subscribers.get(csv_id, set()))
+    
+    def shutdown(self):
+        """Shutdown the PostgreSQL listener and clean up resources"""
+        logger.info("Shutting down SSE Event Manager")
+        self._shutdown_event.set()
+        
+        if self._pg_listener_thread and self._pg_listener_thread.is_alive():
+            self._pg_listener_thread.join(timeout=5)
+        
+        if self._pg_connection:
+            try:
+                self._pg_connection.close()
+            except:
+                pass
 
 
 # Global SSE manager instance

@@ -2,9 +2,10 @@ from dotenv import load_dotenv
 load_dotenv()  # Load .env before anything else. Do not call load_dotenv() elsewhere.
 
 from fastapi import FastAPI
-from db.session import engine, Base, DATABASE_URL
+from db.session import engine, Base, DATABASE_URL, SessionLocal
 from routers import users, catchment
 from models import user, csvfile
+from db.triggers import setup_postgresql_triggers, check_triggers_exist
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware import Middleware
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -60,6 +61,16 @@ app.add_middleware(
 
 # Create tables for all models
 Base.metadata.create_all(bind=engine)
+
+# Setup PostgreSQL triggers for CSV status notifications
+try:
+    db = SessionLocal()
+    if not check_triggers_exist(db):
+        setup_postgresql_triggers(db)
+    db.close()
+except Exception as e:
+    print(f"Warning: Failed to setup PostgreSQL triggers: {e}")
+    print("SSE notifications may not work properly")
 
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
 app.state.limiter = limiter

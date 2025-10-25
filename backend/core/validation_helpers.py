@@ -52,14 +52,25 @@ def validate_id_field(field: str, value: str) -> Optional[str]:
     return None
 
 
+def parse_number(val: Union[str, int, float]) -> Optional[float]:
+    """Parse various types to number (float), returns None if invalid"""
+    try:
+        return float(str(val).strip())
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_int(val: Union[str, int, float]) -> Optional[int]:
     """Parse various types to int, returns None if invalid"""
     try:
+        # First try direct int conversion
         return int(str(val).strip())
     except ValueError:
         try:
-            return int(float(str(val).strip()))
-        except Exception:
+            # Try parsing as float first, then convert to int
+            float_val = float(str(val).strip())
+            return int(float_val)
+        except (ValueError, TypeError):
             return None
 
 
@@ -83,24 +94,29 @@ def validate_drive_values(drive_distance, drive_time) -> tuple[bool, Optional[in
         errors.append("Either drive_distance or drive_time must be provided and non-empty.")
     else:
         if is_present(drive_distance):
-            drive_distance_val = parse_int(drive_distance)
-            if drive_distance_val is None:
-                errors.append("drive_distance must be an integer if present.")
-            elif drive_distance_val <= 0:
-                errors.append("drive_distance must be a positive integer.")
-            elif drive_distance_val > 100000:
+            # Parse as number first, then convert to int
+            parsed_distance = parse_number(drive_distance)
+            if parsed_distance is None:
+                errors.append("drive_distance must be a valid number if present.")
+            elif parsed_distance <= 0:
+                errors.append("drive_distance must be a positive number.")
+            elif parsed_distance > 100000:
                 errors.append("drive_distance is unreasonably large.")
             else:
+                drive_distance_val = int(parsed_distance)  # Convert to int for API
                 use_drive_distance = True
         
         if not use_drive_distance and is_present(drive_time):
-            drive_time_val = parse_int(drive_time)
-            if drive_time_val is None:
-                errors.append("drive_time must be an integer if present.")
-            elif drive_time_val <= 0:
-                errors.append("drive_time must be a positive integer.")
-            elif drive_time_val > 10000:
+            # Parse as number first, then convert to int
+            parsed_time = parse_number(drive_time)
+            if parsed_time is None:
+                errors.append("drive_time must be a valid number if present.")
+            elif parsed_time <= 0:
+                errors.append("drive_time must be a positive number.")
+            elif parsed_time > 10000:
                 errors.append("drive_time is unreasonably large.")
+            else:
+                drive_time_val = int(parsed_time)  # Convert to int for API
     
     return use_drive_distance, drive_distance_val, drive_time_val, errors
 

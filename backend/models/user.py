@@ -10,4 +10,8 @@ class User(Base):
     token = Column(String, nullable=True)
     lepton_token_limit = Column(Integer, default=lambda: int(os.getenv("DEFAULT_USER_TOKENS", 20)), nullable=False)
     lepton_tokens_used = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=func.now()) 
+    created_at = Column(DateTime, default=func.now())
+    
+    # Download tracking
+    total_csvs_downloaded = Column(Integer, default=0, nullable=False)
+    last_csv_download_at = Column(DateTime, nullable=True) 
