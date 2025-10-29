@@ -68,7 +68,6 @@ const StepContent: React.FC<StepContentProps> = ({
           `${apiUrl}/catchment/csv-status-stream/${id}?hashed_token=${hashedToken}&username=${user.name}`
         );
 
-
         eventSource.onmessage = (event) => {
           const data = JSON.parse(event.data);
           console.log("data from sse connection>>>", data);
@@ -83,18 +82,14 @@ const StepContent: React.FC<StepContentProps> = ({
               setResult("failed");
               message.error({
                 content: data.error || "Something went wrong!",
-                duration: 8,
+                duration: 4,
               });
             }
             eventSource.close();
           }
-          if(data.type === "init"){
+          if (data.type === "init") {
             if (data.status === "processing") {
               setResult("pending");
-              message.success({
-                content: "CSV processed successfully!",
-                duration: 2,
-              });
             }
           }
         };
