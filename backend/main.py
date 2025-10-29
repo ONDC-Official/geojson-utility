@@ -20,6 +20,9 @@ from slowapi.middleware import SlowAPIMiddleware
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from core.limiter import limiter
+from routers import user_dashboard
+
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -46,7 +49,7 @@ else:
 RATE_LIMIT = os.environ.get('RATE_LIMIT', '100/minute')
 
 app = FastAPI(docs_url=docs_url, redoc_url=redoc_url, openapi_url=openapi_url)
-
+app.include_router(user_dashboard.router, prefix="")
 # Security headers
 app.add_middleware(SecurityHeadersMiddleware)
 
