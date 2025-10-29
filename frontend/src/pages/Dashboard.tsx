@@ -42,11 +42,6 @@ const Dashboard: React.FC = () => {
   const [perPage, setPerPage] = useState(10);
   const [error, setError] = useState<string | null>(null);
   const { token, logout } = useAuth();
-  console.log(
-    "fileStats.recent_uploads.length",
-    fileStats?.recent_uploads?.length,
-    perPage
-  );
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
 
   useEffect(() => {
@@ -54,7 +49,7 @@ const Dashboard: React.FC = () => {
     const fetchFileStats = async () => {
       try {
         const response = await axios.get(
-          `${apiUrl}/user-dashboard/stats?page=${pageNumber}&per_page=${perPage}`,
+          `${apiUrl}/dashboard/stats?page=${pageNumber}&per_page=${perPage}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -151,7 +146,7 @@ const Dashboard: React.FC = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-2xl font">{fileStats.download_count}</p>
+                  <p className="text-2xl font">{fileStats?.download_count}</p>
                 </CardContent>
               </Card>
               <Card>
@@ -163,7 +158,7 @@ const Dashboard: React.FC = () => {
                 </CardHeader>
                 <CardContent>
                   <p className="text-2xl font">
-                    {fileStats.uploads_last_7days}
+                    {fileStats?.uploads_last_7days}
                   </p>
                 </CardContent>
               </Card>
@@ -174,11 +169,11 @@ const Dashboard: React.FC = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-lg">{fileStats.last_download.filename}</p>
+                  <p className="text-lg">{fileStats?.last_download.filename}</p>
                   <div className="flex items-center text-sm text-gray-500 mt-2">
                     <Clock className="w-4 h-4 mr-2" />
                     {new Date(
-                      fileStats.last_download.downloaded_at
+                      fileStats?.last_download.downloaded_at
                     ).toLocaleString()}
                   </div>
                 </CardContent>
@@ -200,7 +195,7 @@ const Dashboard: React.FC = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {fileStats.recent_uploads.map((upload) => (
+                      {fileStats?.recent_uploads.map((upload) => (
                         <TableRow key={upload.created_at}>
                           <TableCell>
                             <div className="flex items-center">
@@ -252,7 +247,7 @@ const Dashboard: React.FC = () => {
 
                     <span className="text-gray-600">
                       Page {pageNumber} of{" "}
-                      {Math.ceil(fileStats.recent_uploads.length / perPage) ||
+                      {Math.ceil(fileStats?.recent_uploads.length / perPage) ||
                         1}
                     </span>
 
@@ -278,6 +273,11 @@ const Dashboard: React.FC = () => {
               </Card>
             </div>
           </>
+        )}
+        {fileStats == null && (
+          <CardTitle className="flex items-center justify-between">
+            No Data Found
+          </CardTitle>
         )}
       </div>
     </MainContent>
