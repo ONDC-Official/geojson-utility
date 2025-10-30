@@ -7,6 +7,9 @@ RUN echo "VITE_API_BASE_URL=$VITE_API_BASE_URL" > .env.production
 RUN npm install
 RUN npm run build
 
+FROM node:18-slim
+WORKDIR /app
+
 RUN npm install -g serve
 COPY --from=builder /app/dist /app/dist
 EXPOSE 80
