@@ -7,7 +7,7 @@ RUN echo "VITE_API_BASE_URL=$VITE_API_BASE_URL" > .env.production
 RUN npm install
 RUN npm run build
 
-FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
+RUN npm install -g serve
+COPY --from=builder /app/dist /app/dist
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["serve", "-s", "dist", "-l", "5001"]
