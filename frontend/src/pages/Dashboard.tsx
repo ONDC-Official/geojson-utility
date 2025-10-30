@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Download, Upload, Clock, ArrowLeft } from "lucide-react";
+import { Download, Upload, Clock, ArrowLeft, Key } from "lucide-react";
 import { FaFileCsv } from "react-icons/fa";
 import { Link } from "react-router-dom";
 import axios from "axios";
@@ -37,6 +37,7 @@ interface FileStats {
 
 const Dashboard: React.FC = () => {
   const [fileStats, setFileStats] = useState<FileStats | null>(null);
+  const [tokenStats, setTokenStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [pageNumber, setPageNumber] = useState(1);
   const [perPage, setPerPage] = useState(10);
@@ -49,7 +50,7 @@ const Dashboard: React.FC = () => {
     const fetchFileStats = async () => {
       try {
         const response = await axios.get(
-          `${apiUrl}/dashboard/stats?page=${pageNumber}&per_page=${perPage}`,
+          `${apiUrl}/user-dashboard/stats?page=${pageNumber}&per_page=${perPage}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -57,6 +58,11 @@ const Dashboard: React.FC = () => {
           }
         );
 
+        const res = await axios.get(`${apiUrl}/auth/token-status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        setTokenStats(res?.data);
         setFileStats(response.data.file_stats);
       } catch (err) {
         setError("Failed to fetch dashboard data.");
@@ -128,14 +134,54 @@ const Dashboard: React.FC = () => {
   return (
     <MainContent>
       <div className="flex mb-6">
-        <ArrowLeft className="w-5 h-5 text-primary cursor-pointer mr-4" />
         <Link to="/" className="text-primary hover:underline">
-          Go back to Home
+          <ArrowLeft className="w-5 h-5 text-primary cursor-pointer mr-4" />
         </Link>
+        Go back to Home
       </div>
+
       <div className="bg-white p-10 rounded-xl shadow-lg">
         <h2 className="text-2xl font text-primary mb-4">Dashboard</h2>
-        {fileStats && (
+        {tokenStats && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  Tokens Used
+                  <Key className="w-5 h-5 text-primary" />
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font">{tokenStats.tokens.used}</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  Tokens Remaining
+                  <Key className="w-5 h-5 text-green-500" />
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font">{tokenStats.tokens.remaining}</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  Token Limit
+                  <Key className="w-5 h-5 text-gray-500" />
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font">{tokenStats.tokens.limit}</p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+        {fileStats ? (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card>
@@ -169,112 +215,121 @@ const Dashboard: React.FC = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-lg">{fileStats?.last_download.filename}</p>
-                  <div className="flex items-center text-sm text-gray-500 mt-2">
-                    <Clock className="w-4 h-4 mr-2" />
-                    {new Date(
-                      fileStats?.last_download.downloaded_at
-                    ).toLocaleString()}
-                  </div>
+                  {fileStats?.last_download ? (
+                    <>
+                      <p className="text-lg">
+                        {fileStats.last_download.filename}
+                      </p>
+                      <div className="flex items-center text-sm text-gray-500 mt-2">
+                        <Clock className="w-4 h-4 mr-2" />
+                        {new Date(
+                          fileStats.last_download.downloaded_at
+                        ).toLocaleString()}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-gray-500">No downloads yet</p>
+                  )}
                 </CardContent>
               </Card>
             </div>
+
             <div className="mt-6">
               <Card>
                 <CardHeader>
                   <CardTitle>Recent Uploads</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Filename</TableHead>
-                        <TableHead>Uploaded At</TableHead>
-                        {/* <TableHead>Status</TableHead> */}
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {fileStats?.recent_uploads.map((upload) => (
-                        <TableRow key={upload.created_at}>
-                          <TableCell>
-                            <div className="flex items-center">
-                              <FaFileCsv
-                                className="w-5 h-5 mr-2"
-                                style={{ color: "#00a86b" }}
-                              />
-                              {upload.filename}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {new Date(upload.created_at).toLocaleString()}
-                          </TableCell>
-                          {/* <TableCell>
-                            <Badge
-                              variant={
-                                upload.status === "done"
-                                  ? "default"
-                                  : "destructive"
-                              }
-                            >
-                              {upload.status.toUpperCase()}
-                            </Badge>
-                          </TableCell> */}
-                          <TableCell>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => handleDownload(upload.id)} //id to be passed
-                            >
-                              <Download className="w-5 h-5" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  {fileStats?.recent_uploads?.length > 0 ? (
+                    <>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Filename</TableHead>
+                            <TableHead>Uploaded At</TableHead>
+                            <TableHead>Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {fileStats?.recent_uploads?.map((upload) => (
+                            <TableRow key={upload.created_at}>
+                              <TableCell>
+                                <div className="flex items-center">
+                                  <FaFileCsv
+                                    className="w-5 h-5 mr-2"
+                                    style={{ color: "#00a86b" }}
+                                  />
+                                  {upload.filename}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                {new Date(upload.created_at).toLocaleString()}
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => handleDownload(upload.id)}
+                                >
+                                  <Download className="w-5 h-5" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
 
-                  <div className="flex justify-between items-center mt-4">
-                    <Button
-                      variant="outline"
-                      disabled={pageNumber === 1}
-                      onClick={() =>
-                        setPageNumber((prev) => Math.max(prev - 1, 1))
-                      }
-                    >
-                      Previous
-                    </Button>
+                      <div className="flex justify-between items-center mt-4">
+                        <Button
+                          variant="outline"
+                          disabled={pageNumber === 1}
+                          onClick={() =>
+                            setPageNumber((prev) => Math.max(prev - 1, 1))
+                          }
+                        >
+                          Previous
+                        </Button>
 
-                    <span className="text-gray-600">
-                      Page {pageNumber} of{" "}
-                      {Math.ceil(fileStats?.recent_uploads.length / perPage) ||
-                        1}
-                    </span>
+                        <span className="text-gray-600">
+                          Page {pageNumber} of{" "}
+                          {Math.ceil(
+                            fileStats?.recent_uploads.length / perPage
+                          ) || 1}
+                        </span>
 
-                    <Button
-                      variant="outline"
-                      disabled={
-                        pageNumber ===
-                        Math.ceil(fileStats.recent_uploads.length / perPage)
-                      }
-                      onClick={() =>
-                        setPageNumber((prev) =>
-                          prev <
-                          Math.ceil(fileStats.recent_uploads.length / perPage)
-                            ? prev + 1
-                            : prev
-                        )
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
+                        <Button
+                          variant="outline"
+                          disabled={
+                            pageNumber ===
+                            Math.ceil(
+                              fileStats?.recent_uploads.length / perPage
+                            )
+                          }
+                          onClick={() =>
+                            setPageNumber((prev) =>
+                              prev <
+                              Math.ceil(
+                                fileStats?.recent_uploads.length / perPage
+                              )
+                                ? prev + 1
+                                : prev
+                            )
+                          }
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center text-gray-500 py-4">
+                      No recent uploads found
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
           </>
-        )}
-        {fileStats == null && (
+        ) : (
           <CardTitle className="flex items-center justify-between">
             No Data Found
           </CardTitle>

@@ -41,7 +41,6 @@ const StepContent: React.FC<StepContentProps> = ({
   async function hashToken(token: string): Promise<string> {
     const encoder = new TextEncoder();
     const data = encoder.encode(token);
-    console.log("data", data);
     const hashBuffer = await crypto.subtle.digest("SHA-256", data);
     const hashArray = Array.from(new Uint8Array(hashBuffer)); // convert buffer to byte array
     const hashHex = hashArray
@@ -62,7 +61,6 @@ const StepContent: React.FC<StepContentProps> = ({
     const setupEventSource = async () => {
       const hashedToken = await hashToken(token);
 
-      console.log("hashedToken", hashedToken);
       if (id) {
         const eventSource = new EventSource.EventSource(
           `${apiUrl}/catchment/csv-status-stream/${id}?hashed_token=${hashedToken}&username=${user.name}`
@@ -70,7 +68,6 @@ const StepContent: React.FC<StepContentProps> = ({
 
         eventSource.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          console.log("data from sse connection>>>", data);
           if (data.type === "complete") {
             if (data.status === "done" || data.status === "partial") {
               setResult("done");
