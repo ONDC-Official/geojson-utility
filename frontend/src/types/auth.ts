@@ -1,6 +1,6 @@
 
 export interface User {
-  name: string;
+  username: string;
 }
 export interface login {
   token: string;
@@ -15,7 +15,7 @@ export interface LoginCredentials {
 export interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: any
+  login: (token: string, user: User) => void;
   logout: () => void;
   isAuthenticated: boolean;
 }
