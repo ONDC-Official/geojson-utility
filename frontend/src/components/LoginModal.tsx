@@ -32,7 +32,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onCancel }) => {
         localStorage.setItem("user_data", response?.data?.username);
         const token = values.token;
         const user = response?.data?.username;
-        login(token, user);
+        login(token, { username: user });
 
         onCancel();
         form.resetFields();
