@@ -63,7 +63,7 @@ const StepContent: React.FC<StepContentProps> = ({
 
       if (id) {
         const eventSource = new EventSource.EventSource(
-          `${apiUrl}/catchment/csv-status-stream/${id}?hashed_token=${hashedToken}&username=${user.name}`
+          `${apiUrl}/catchment/csv-status-stream/${id}?hashed_token=${hashedToken}&username=${user.username}`
         );
 
         eventSource.onmessage = (event) => {
