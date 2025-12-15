@@ -28,16 +28,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const savedToken = localStorage.getItem("jwt_token");
     const savedUser = localStorage.getItem("user_data");
-    if (savedToken) {
+    if (savedToken && savedUser) {
       setToken(savedToken);
       setUser({ name: savedUser });
     }
   }, []);
 
-  const login = (token: string, user: string) => {
+  const login = (token: string, user: { username: string }) => {
     setToken(token);
+    setUser({ name: user.username });
     localStorage.setItem("jwt_token", token);
-    localStorage.setItem("user_data", user);
+    localStorage.setItem("user_data", user.username);
   };
 
   const logout = () => {
