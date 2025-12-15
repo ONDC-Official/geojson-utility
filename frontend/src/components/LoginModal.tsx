@@ -13,11 +13,10 @@ interface LoginModalProps {
 const LoginModal: React.FC<LoginModalProps> = ({ open, onCancel }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, logout } = useAuth();
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
   const handleLogin = async (values: LoginCredentials) => {
     setLoading(true);
-    localStorage.setItem("jwt_token", values.token);
     try {
       const response = await axios.post(
         `${apiUrl}/auth/login`,
@@ -26,21 +25,25 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onCancel }) => {
           headers: { "Content-Type": "application/json" },
         }
       );
-      if (response) {
+      if (response.data && response.data.username) {
         message.success("Login successful!");
-
-        localStorage.setItem("user_data", response?.data?.username);
         const token = values.token;
-        const user = response?.data?.username;
-        login(token, { username: user });
+        const user = response.data;
+        login(token, user);
 
         onCancel();
         form.resetFields();
-        setLoading(false);
         window.location.reload();
+      } else {
+        throw new Error("Login failed: Invalid response from server.");
       }
     } catch (err: any) {
-      message.error(err.message || "Invalid credentials. Please try again.");
+      logout(); // Clear any invalid state
+      const errorMessage =
+        err.response?.data?.detail ||
+        "Invalid credentials. Please try again.";
+      message.error(errorMessage);
+    } finally {
       setLoading(false);
     }
   };
