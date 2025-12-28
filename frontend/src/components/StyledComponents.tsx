@@ -92,3 +92,15 @@ export const UploadSection: React.FC<{ children: React.ReactNode }> = ({
     {children}
   </div>
 );
+
+export const InstructionListUl: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => (
+  <ul style={{ marginTop: "8px", paddingLeft: "18px", listStyleType: "disc" }}>
+    {children}
+  </ul>
+);
+
+export const InstructionListLi: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => <li>{children}</li>;

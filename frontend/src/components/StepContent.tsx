@@ -13,6 +13,8 @@ import {
   InstructionList,
   InstructionListItem,
   UploadSection,
+  InstructionListUl,
+  InstructionListLi,
 } from "./StyledComponents";
 import axios from "axios";
 
@@ -285,37 +287,49 @@ const StepContent: React.FC<StepContentProps> = ({
             <Paragraph>Welcome to the ONDC Polygon Service</Paragraph>
             <InstructionList>
               <InstructionListItem title="Step 1: Generate Token">
-                Submit a token generation request by filling out the form. Once
-                your request is approved, a token will be issued to you. You can
-                access the form by clicking the "Generate Token" button at the
-                top of the page.
+              Submit a token generation request by filling out the form. Once                                                               
+              your request is approved, a token will be issued to you. You can                                                              
+              access the form by clicking the "Generate Token" button at the                                                                
+              top of the page.
                 <br />
-                Use the token sent to your email to log in. This token acts as
-                your access credential for the tool.
+                Use this token to sign in — it is required to upload and process files.
               </InstructionListItem>
 
-              <InstructionListItem title="Step 2:Download Sample CSV">
-                Download the sample CSV template provided. This template will
-                guide you in formatting your data correctly before uploading.
+              <InstructionListItem title="Step 2: Download Sample CSV">
+                Download the provided sample CSV template. This file defines the exact
+                structure and formatting required for successful processing.
                 <br />
+                Do not modify column names or remove mandatory fields.
               </InstructionListItem>
 
-              <InstructionListItem title="Step 3: Upload CSV File">
-                Fill in your data following the structure and field requirements
-                shown in the sample CSV. Ensure the format matches exactly to
-                avoid processing errors.
-                <br />
-                Go to Step 3 in the tool interface and upload your completed CSV
-                file. Once uploaded, click the "Next" button to begin
+              <InstructionListItem title="Step 3: Prepare Your CSV">
+                Fill in your data carefully following the rules below:
+                <InstructionListUl>
+                  <InstructionListLi>
+                    <b>ID fields</b> (<code>snp_id</code>, <code>provider_id</code>,{" "}
+                    <code>location_id</code>) must be unique identifiers — not names.
+                    Only letters, numbers, <code>_</code>, <code>-</code>, <code>.</code>,{" "}
+                    <code>@</code>, and <code>/</code> are allowed.
+                  </InstructionListLi>
+                  <InstructionListLi>
+                    <b>location_gps</b> must be in <code>lat,long</code> format with at least
+                    4 decimal places.
+                  </InstructionListLi>
+                  <InstructionListLi>
+                    Provide at least one of <b>drive_distance</b> or <b>drive_time</b>.
+                  </InstructionListLi>
+                  <InstructionListLi>
+                    Ensure there are no empty rows or extra spaces in any field.
+                  </InstructionListLi>
+                </InstructionListUl>
               </InstructionListItem>
 
-              <InstructionListItem title="Step 4: Download Processed File">
-                After the file is processed in Step 4, a final CSV file will be
-                generated. You can then download this file for your records or
-                further use.
+              <InstructionListItem title="Step 4: Upload and Process">
+                Upload the completed CSV file and click <b>Next</b>.  
+                The system will validate the data and generate a processed file.
                 <br />
-                Use the provided GeoJSON data to update the serviceable regions
-                in your store catalog accordingly.
+                If any issues are found, download the output CSV to review errors, fix them,
+                and re-upload.
               </InstructionListItem>
             </InstructionList>
             {!isAuthenticated && (
