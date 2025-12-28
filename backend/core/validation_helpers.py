@@ -45,7 +45,7 @@ def validate_id_field(field: str, value: str) -> Optional[str]:
         return f"{field} must be a non-empty string."
     if len(value) > 255:
         return f"{field} must be at most 255 characters."
-    if not re.match(r'^[\w\.\-@]+$', value):
+    if not re.match(r'^[\w\.\-@/]+$', value):
         return f"{field} contains invalid characters."
     if value.strip() != value:
         return f"{field} must not have leading/trailing whitespace."
