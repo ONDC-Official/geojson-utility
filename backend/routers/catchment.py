@@ -145,24 +145,54 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
     # Row count limit (1000 rows)
     try:
         df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+        # Strip whitespace from column names
+        df.columns = df.columns.str.strip()
+        # Debug logging to see what columns were detected
+        logger.info(f"CSV columns detected: {list(df.columns)}")
+        logger.info(f"CSV shape: {df.shape}")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
     if len(df) > 1000:
         raise HTTPException(status_code=400, detail="CSV file has too many rows (max 1000)")
+
+    username = current_user.get('username')
+    user_id = current_user.get('user_id')
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID not found in authentication")
+
+    # Get user's token status
+    user_token_status = LeptonTokenService.get_token_status(user_id, db)
+    csv_row_count = len(df)
+
+    # Create CSV record early so it can be used in validation error handling
+    new_csv = CSVFile(filename=file.filename, file_content=content, username=username, user_id=user_id, status='pending')
+    db.add(new_csv)
+    db.commit()
+    db.refresh(new_csv)
+    csv_id = new_csv.id
+
     # Check for required columns
     required_columns = {'snp_id', 'provider_id', 'location_id', 'location_gps', 'drive_distance', 'drive_time'}
-    missing_columns = required_columns - set(df.columns)
+    detected_columns = set(df.columns)
+    missing_columns = required_columns - detected_columns
     if missing_columns:
+        # Enhanced error logging
+        logger.error(f"Missing columns validation failed")
+        logger.error(f"Required columns: {sorted(required_columns)}")
+        logger.error(f"Detected columns: {sorted(detected_columns)}")
+        logger.error(f"Missing columns: {sorted(missing_columns)}")
+
         # Save CSV with errors column
-        df['errors'] = [f"Missing columns: {', '.join(missing_columns)}"] * len(df)
+        error_msg = f"Missing columns: {', '.join(sorted(missing_columns))}. Detected columns: {', '.join(sorted(detected_columns))}"
+        df['errors'] = [error_msg] * len(df)
         output = io.StringIO()
         df.to_csv(output, index=False)
         output.seek(0)
-        csv_file.file_content = output.getvalue().encode('utf-8')
-        csv_file.status = 'failed'
-        csv_file.error = f"Missing columns: {', '.join(missing_columns)}"
-        session.commit()
-        return
+        new_csv.file_content = output.getvalue().encode('utf-8')
+        new_csv.status = 'failed'
+        new_csv.error = error_msg
+        db.commit()
+        return JSONResponse(status_code=400, content={"error": error_msg})
     # Check for duplicate rows
     if df.duplicated().any():
         raise HTTPException(status_code=400, detail="CSV file contains duplicate rows.")
@@ -170,20 +200,6 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
     if df['location_id'].duplicated().any():
         dups = df[df['location_id'].duplicated(keep=False)]['location_id'].tolist()
         raise HTTPException(status_code=400, detail=f"CSV file contains duplicate location_id values: {set(dups)}")
-    username = current_user.get('username')
-    user_id = current_user.get('user_id')
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in authentication")
-    
-    # Get user's token status
-    user_token_status = LeptonTokenService.get_token_status(user_id, db)
-    csv_row_count = len(df)
-    
-    new_csv = CSVFile(filename=file.filename, file_content=content, username=username, user_id=user_id, status='pending')
-    db.add(new_csv)
-    db.commit()
-    db.refresh(new_csv)
-    csv_id = new_csv.id
     def process_csv_in_background(csv_id, content, username, user_id):
         logger.info(f"Starting background processing thread for CSV {csv_id}")
         session = None
@@ -195,30 +211,42 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                 return
             csv_file.status = 'processing'
             df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+            # Strip whitespace from column names (same fix as main function)
+            df.columns = df.columns.str.strip()
+            # Debug logging for background processing
+            logger.info(f"Background processing - CSV columns detected: {list(df.columns)}")
             total_rows = len(df)
-            
+
             # Store initial processing metrics
             csv_file.total_rows = total_rows
             csv_file.processing_started_at = datetime.now(timezone.utc)
             session.commit()
-            
+
             # PostgreSQL trigger will automatically broadcast start event when status changes to 'processing'
             logger.info(f"CSV {csv_id} marked as processing - PostgreSQL trigger will broadcast start event")
             errors_per_row = [''] * len(df)
             geojson_results = [None] * len(df)
             required_columns = {'snp_id', 'provider_id', 'location_id', 'location_gps', 'drive_distance', 'drive_time'}
-            missing_columns = required_columns - set(df.columns)
+            detected_columns = set(df.columns)
+            missing_columns = required_columns - detected_columns
             if missing_columns:
+                # Enhanced error logging for background processing
+                logger.error(f"Background processing - Missing columns validation failed for CSV {csv_id}")
+                logger.error(f"Background processing - Required columns: {sorted(required_columns)}")
+                logger.error(f"Background processing - Detected columns: {sorted(detected_columns)}")
+                logger.error(f"Background processing - Missing columns: {sorted(missing_columns)}")
+
                 # Save CSV with errors column
-                df['errors'] = [f"Missing columns: {', '.join(missing_columns)}"] * len(df)
+                error_msg = f"Missing columns: {', '.join(sorted(missing_columns))}. Detected columns: {', '.join(sorted(detected_columns))}"
+                df['errors'] = [error_msg] * len(df)
                 output = io.StringIO()
                 df.to_csv(output, index=False)
                 output.seek(0)
                 csv_file.file_content = output.getvalue().encode('utf-8')
                 csv_file.status = 'failed'
-                csv_file.error = f"Missing columns: {', '.join(missing_columns)}"
+                csv_file.error = error_msg
                 session.commit()
-                
+
                 # PostgreSQL trigger will automatically broadcast completion event
                 logger.info(f"CSV {csv_id} marked as failed due to missing columns - PostgreSQL trigger will broadcast completion event")
                 return
